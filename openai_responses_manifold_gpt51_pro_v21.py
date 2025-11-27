@@ -70,6 +70,13 @@ MODEL_PRICING_USD_PER_MTOK = {
     "gpt-4o": {"input": 2.50, "output": 10.00},
 }
 
+# Flat per-image pricing (USD) for image generation models.
+# Values assume a default 1024x1024 generation size when usage metadata
+# omits dimensions.
+IMAGE_MODEL_PRICING_USD = {
+    "gpt-image-1": {"1024x1024": 0.04},
+}
+
 # Running per‑conversation cost accumulator.  This is keyed by the Open WebUI
 # `chat_id` when available.  It is purely best‑effort and only lives for the
 # lifetime of this Python process.
@@ -2189,6 +2196,16 @@ class Pipe:
         include_image_costs = valves.INCLUDE_IMAGE_COSTS or bool(
             _extract_image_count(usage)
         )
+        if not include_image_costs and (
+            _is_image_model(model) or _is_image_model(pseudo_model)
+        ):
+            include_image_costs = True
+
+        image_model_override = None
+        if usage:
+            usage_model = usage.get("model")
+            if _is_image_model(usage_model):
+                image_model_override = usage_model
 
         cost_line, _, _ = format_cost_summary(
             model,
@@ -2196,6 +2213,7 @@ class Pipe:
             chat_id=chat_id,
             include_image_costs=include_image_costs,
             pseudo_model=pseudo_model,
+            image_model_override=image_model_override,
         )
 
         return cost_line
@@ -2838,6 +2856,33 @@ def _is_image_model(name: str | None) -> bool:
     return "gpt-image" in normalized
 
 
+def _estimate_image_cost(
+    model: str | None,
+    pseudo_model: str | None,
+    image_count: int,
+    *,
+    image_model_override: str | None = None,
+) -> tuple[float, str, str]:
+    """Return (cost, model_label, size_label) for image generations."""
+
+    resolved_model = (
+        image_model_override or pseudo_model or model or "gpt-image-1"
+    ).strip() or "gpt-image-1"
+    if not _is_image_model(resolved_model):
+        resolved_model = "gpt-image-1"
+
+    normalized_model = resolved_model.split(".")[-1].lower()
+    size_label = "1024x1024"
+
+    # Look up pricing with a conservative default when unknown.
+    pricing = IMAGE_MODEL_PRICING_USD.get(normalized_model) or IMAGE_MODEL_PRICING_USD.get(
+        "gpt-image-1"
+    )
+    per_image_cost = pricing.get(size_label, 0.04) if pricing else 0.04
+
+    return per_image_cost * image_count, resolved_model, size_label
+
+
 def estimate_response_cost_usd(
     model: str, usage: dict | None, *, include_image_costs: bool = False
 ) -> float:
@@ -2852,6 +2897,11 @@ def estimate_response_cost_usd(
     ignored – this is meant for **human-friendly estimates only**.
     """
     if not usage:
+        if include_image_costs and _is_image_model(model):
+            image_cost, _, _ = _estimate_image_cost(
+                model, None, 1, image_model_override=model
+            )
+            return float(image_cost)
         return 0.0
 
     norm = _normalize_model_for_pricing(model)
@@ -2875,8 +2925,18 @@ def estimate_response_cost_usd(
 
     if include_image_costs:
         image_count = _extract_image_count(usage)
+        usage_model = usage.get("model") if usage else None
+        if image_count <= 0 and (_is_image_model(model) or _is_image_model(usage_model)):
+            image_count = 1
+
         if image_count:
-            cost += 0.04 * image_count
+            image_cost, _, _ = _estimate_image_cost(
+                model,
+                usage_model,
+                image_count,
+                image_model_override=usage_model,
+            )
+            cost += image_cost
 
     return float(cost)
 
@@ -2888,6 +2948,7 @@ def format_cost_summary(
     chat_id: str | None,
     include_image_costs: bool = False,
     pseudo_model: str | None = None,
+    image_model_override: str | None = None,
 ) -> tuple[str, float, float]:
     """
     Build a human-readable cost summary line and update the running total.
@@ -2903,7 +2964,16 @@ def format_cost_summary(
         if _is_image_model(model) or _is_image_model(pseudo_model):
             image_count = 1
 
-    image_cost = 0.04 * image_count if image_count else 0.0
+    image_cost = 0.0
+    image_model_label = ""
+    image_size_label = ""
+    if image_count:
+        image_cost, image_model_label, image_size_label = _estimate_image_cost(
+            model,
+            pseudo_model,
+            image_count,
+            image_model_override=image_model_override,
+        )
     cost_this = text_cost + image_cost
     if cost_this <= 0:
         return ("", 0.0, 0.0)
@@ -2975,7 +3045,8 @@ def format_cost_summary(
     if image_count:
         plural = "image" if image_count == 1 else "images"
         image_line = (
-            f"[approx cost {image_count} {plural}  (gpt-image-1): ${image_cost:.6f}"
+            f"[approx cost {image_count} {plural} ({image_model_label or 'gpt-image-1'}"
+            f" {image_size_label or '1024x1024'}): ${image_cost:.6f}"
         )
         if chat_id:
             image_line += f" | approx total: ${cumulative:.6f}"
