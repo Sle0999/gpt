@@ -1526,16 +1526,14 @@ class Pipe:
                 if valves.INLINE_COSTS_IN_MESSAGE:
                     # Inline mode: append the cost summary to the assistant
                     # message content so it is visible in the transcript.
-                    if cost_line not in assistant_message:
-                        if assistant_message:
-                            assistant_message = f"{assistant_message}\n\n{cost_line}"
-                        else:
-                            assistant_message = cost_line
-                        if event_emitter is not None:
-                            await event_emitter(
-                                {
-                                    "type": "chat:message",
-                                    "data": {"content": assistant_message},
+                    assistant_message = self._append_cost_line_once(
+                        assistant_message, cost_line
+                    )
+                    if event_emitter is not None:
+                        await event_emitter(
+                            {
+                                "type": "chat:message",
+                                "data": {"content": assistant_message},
                                 }
                             )
                 else:
@@ -1785,11 +1783,7 @@ class Pipe:
                 if valves.INLINE_COSTS_IN_MESSAGE:
                     # Inline mode: append the cost summary directly to the
                     # assistant text returned for this call.
-                    if cost_line not in final_text:
-                        if final_text:
-                            final_text = f"{final_text}\n\n{cost_line}"
-                        else:
-                            final_text = cost_line
+                    final_text = self._append_cost_line_once(final_text, cost_line)
                 else:
                     # Notification mode: do NOT change the assistant reply
                     # text. Instead, emit the approximate cost as a
@@ -2198,6 +2192,29 @@ class Pipe:
         )
 
         return cost_line
+
+    @staticmethod
+    def _append_cost_line_once(text: str, cost_line: str) -> str:
+        """Append ``cost_line`` to ``text`` while preventing duplicates.
+
+        If the cost line already exists (possibly multiple times), the
+        resulting string will contain exactly one copy placed at the end,
+        separated by a blank line when there is existing content.
+        """
+
+        if not cost_line:
+            return text
+
+        if not text:
+            return cost_line
+
+        if cost_line in text:
+            cleaned = text.replace(cost_line, "").strip()
+            if not cleaned:
+                return cost_line
+            return f"{cleaned}\n\n{cost_line}"
+
+        return f"{text}\n\n{cost_line}"
 
     async def _route_gpt5_auto(
         self,
