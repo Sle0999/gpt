@@ -1,0 +1,1 @@
+GPT 4, 4o, 5, 5 pro, and 5.1 manifold for OpenWebUI. Code heavily modified but initally from https://github.com/jrkropp/open-webui-developer-toolkit/tree/main/functions/pipes/openai_responses_manifold.
