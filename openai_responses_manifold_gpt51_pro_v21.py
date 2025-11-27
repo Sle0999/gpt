@@ -2860,7 +2860,7 @@ def _infer_image_count_from_text_reply(text: str | None) -> int:
         "image has been created",
         "image was generated",
         "image was created",
-        "Image created",
+        "image created",
         "the image of",
         "here is the image",
     ]
@@ -2871,6 +2871,9 @@ def _infer_image_count_from_text_reply(text: str | None) -> int:
         return 1
 
     return 0
+
+
+def _is_image_model(name: str | None) -> bool:
     """Return True when the supplied model name represents image generation."""
 
     if not name:
