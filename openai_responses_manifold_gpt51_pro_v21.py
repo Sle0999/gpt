@@ -195,6 +195,12 @@ DETAILS_RE = re.compile(
     re.S | re.I,
 )
 
+# Matches any previously appended cost summary lines so they can be replaced
+# with the latest one and avoid duplicates like:
+# [approx cost this reply (...): $X]
+# [approx cost this reply (...): $X | approx total: $Y]
+COST_LINE_RE = re.compile(r"\[approx cost this reply[^\]]*\]", re.I)
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 3. Data Models
@@ -2205,16 +2211,11 @@ class Pipe:
         if not cost_line:
             return text
 
-        if not text:
+        cleaned = COST_LINE_RE.sub("", text).strip()
+        if not cleaned:
             return cost_line
 
-        if cost_line in text:
-            cleaned = text.replace(cost_line, "").strip()
-            if not cleaned:
-                return cost_line
-            return f"{cleaned}\n\n{cost_line}"
-
-        return f"{text}\n\n{cost_line}"
+        return f"{cleaned}\n\n{cost_line}"
 
     async def _route_gpt5_auto(
         self,
