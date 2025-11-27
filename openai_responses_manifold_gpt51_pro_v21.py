@@ -2840,6 +2840,45 @@ def _extract_image_count(usage: dict | None) -> int:
     return 0
 
 
+def _estimate_image_count_from_output(items: list[dict] | None) -> int:
+    """Heuristically count generated images from output items."""
+
+    if not items:
+        return 0
+
+    count = 0
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+
+        item_type = (item.get("type") or "").lower()
+        if item_type in {
+            "output_image",
+            "image",
+            "image_url",
+            "image_file",
+            "image_base64",
+        }:
+            count += 1
+            continue
+
+        if item_type == "message":
+            for block in item.get("content") or []:
+                if not isinstance(block, dict):
+                    continue
+                block_type = (block.get("type") or "").lower()
+                if block_type in {
+                    "output_image",
+                    "image",
+                    "image_url",
+                    "image_file",
+                    "image_base64",
+                }:
+                    count += 1
+
+    return count
+
+
 def _infer_image_count_from_text_reply(text: str | None) -> int:
     """Heuristically infer that an image was generated from a plain text
     assistant reply, even when the Responses output does not contain any
@@ -2860,7 +2899,7 @@ def _infer_image_count_from_text_reply(text: str | None) -> int:
         "image has been created",
         "image was generated",
         "image was created",
-        "Image created",
+        "image created",
         "the image of",
         "here is the image",
     ]
@@ -2871,6 +2910,9 @@ def _infer_image_count_from_text_reply(text: str | None) -> int:
         return 1
 
     return 0
+
+
+def _is_image_model(name: str | None) -> bool:
     """Return True when the supplied model name represents image generation."""
 
     if not name:
