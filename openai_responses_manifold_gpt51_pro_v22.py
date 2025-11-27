@@ -737,6 +737,22 @@ class Pipe:
             ),
         )
 
+
+        GPT5_AUTO_ROUTER_MODEL: str = Field(
+            default="gpt-4.1-nano",
+            description=(
+                "Lightweight model used internally to decide which concrete model "
+                "gpt-5-auto should route to (for example, gpt-4.1-nano or gpt-4o-mini)."
+            ),
+        )
+
+        GPT5_AUTO_ROUTER_DEBUG: bool = Field(
+            default=False,
+            description=(
+                "If true, append debug info to gpt-5-auto routing decisions indicating "
+                "whether the small-model router or the heuristic fallback was used."
+            ),
+        )
         # 3) Reasoning & summaries
         REASONING_SUMMARY: Literal["auto", "concise", "detailed", "disabled"] = Field(
             default="disabled",
@@ -2268,32 +2284,38 @@ class Pipe:
 
         return f"{cleaned}\n\n{cost_line}"
 
+
+    def _debug_tag(self, valves: "Pipe.Valves", tag: str) -> str:
+        """Return a debug suffix if GPT5_AUTO_ROUTER_DEBUG is enabled."""
+        try:
+            if getattr(valves, "GPT5_AUTO_ROUTER_DEBUG", False):
+                return f" [{tag}]"
+        except Exception:
+            pass
+        return ""
+
     async def _route_gpt5_auto(
         self,
         last_user_message: str,
         valves: "Pipe.Valves",
     ) -> str:
-        """Heuristic router for the ``gpt-5-auto`` pseudo-model.
-
-        This function does **not** call another OpenAI model. Instead it
-        inspects the last user message plus a few valve settings and picks
-        one of the concrete models you have configured in WebUI:
-
-        - ``gpt-4.1-nano``  (very small / very cheap)
-        - ``gpt-4o``        (fast general multimodal)
-        - ``gpt-5.1``       (fast GPT-5-level reasoning)
-        - ``gpt-5-thinking``
-        - ``gpt-5-thinking-high``
-        - ``gpt-5-thinking-minimal``
-        - ``gpt-5-pro``     (deep high-effort reasoning; effort is forced
-                             to ``"high"`` elsewhere in the pipe)
-
-        The heuristics are intentionally simple and conservative so we never
-        pick a model that is unavailable to your account.
         """
-        # Coerce the last user message into plain text. In the Responses
-        # API / Open WebUI chain this may be a string, a list of content
-        # blocks, or other structured data.
+        Router for the ``gpt-5-auto`` pseudo-model.
+
+        Primary path:
+        - Use a small, cheap model (e.g. gpt-4.1-nano or gpt-4o-mini, controlled
+          by the GPT5_AUTO_ROUTER_MODEL valve) to choose ONE target pseudo-model
+          from a fixed list.
+
+        Fallback path:
+        - If the router model errors, times out, or returns an invalid value,
+          fall back to the original heuristic routing logic based on prompt
+          length, heavy / reasoning keywords, and explicit Pro requests.
+        """
+
+        # --------------------------------------------------------------
+        # 1. Normalise the last user message into plain text
+        # --------------------------------------------------------------
         if isinstance(last_user_message, str):
             text = last_user_message.strip()
         elif isinstance(last_user_message, list):
@@ -2302,8 +2324,6 @@ class Pipe:
                 if isinstance(block, str):
                     parts.append(block)
                 elif isinstance(block, dict):
-                    # Typical shapes: {"type":"text","text":"..."} or
-                    # other content blocks which may contain text.
                     if "text" in block:
                         parts.append(str(block.get("text", "")))
                     elif "input" in block:
@@ -2313,15 +2333,16 @@ class Pipe:
             text = str(last_user_message or "").strip()
 
         if not text:
-            # No real content – cheapest reasonable default.
-            return "gpt-4.1-nano"
+            # No real content – stick to the cheapest reasonable default.
+            return "gpt-4.1-nano" + self._debug_tag(valves, "fallback")
 
         lower = text.lower()
         char_len = len(text)
         word_len = len(text.split())
 
-        # If the user or admin explicitly enabled reasoning summaries or
-        # persistence, bias toward a thinking / pro model.
+        # --------------------------------------------------------------
+        # 2. Valve hints: reasoning + speed preferences
+        # --------------------------------------------------------------
         try:
             reasoning_summary = getattr(valves, "REASONING_SUMMARY", "disabled")
             persist_reasoning = getattr(valves, "PERSIST_REASONING_TOKENS", "disabled")
@@ -2333,132 +2354,270 @@ class Pipe:
             str(persist_reasoning).lower() != "disabled"
         )
 
-        # Signals for heavy reasoning / coding / multi-step work.
-        heavy_keywords = [
-            "step by step",
-            "deeply explain",
-            "in depth",
-            "detailed explanation",
-            "detailed",
-            "formal proof",
-            "prove that",
-            "theorem",
-            "proof",
-            "derive",
-            "complex problem",
-            "multi-step",
-            "multi step",
-            "chain-of-thought",
-            "chain of thought",
-            "reason through",
-            "strategy",
-            "plan out",
-            "architecture",
-            "analyze this code",
-            "refactor this",
-            "optimize this",
-            "debug this",
-            # Domain-heavy scientific / astrophysics cues
-            "penrose process",
-            "kerr spacetime",
-            "black hole",
-            "black holes",
-            "superradiance",
-            "general relativity",
-            "quantum field theory",
-            "event horizon",
-            "astrophysics",
-            "space science",
-            # Generic high-effort cues
-            "very advanced",
-            "advanced problem",
-            "advanced",
-            "pro-level",
-            "pro level",
-            "deeper reasoning",
-            "deep reasoning",
-            "explain",
-        ]
-        heavy_hit = any(kw in lower for kw in heavy_keywords)
+        # Optional knob: if you have a SPEED_OVER_QUALITY valve, you can bias
+        # the router toward cheaper models when in doubt.
+        speed_over_quality = bool(getattr(valves, "SPEED_OVER_QUALITY", False))
 
-        pro_requested = any(
-            phrase in lower
-            for phrase in [
-                "use gpt-5-pro",
-                "use the pro model",
-                "run with gpt-5-pro",
+        # --------------------------------------------------------------
+        # 3. Heuristic fallback (original logic)
+        # --------------------------------------------------------------
+        def heuristic_route() -> str:
+            """
+            Original heuristic routing logic (length + heavy reasoning cues).
+            This is used if the small router model fails or returns something
+            invalid.
+            """
+            # Signals for heavy reasoning / coding / multi-step work.
+            heavy_keywords = [
+                # General reasoning / explanation
+                "step by step",
+                "deeply explain",
+                "in depth",
+                "detailed explanation",
+                "detailed",
+                "formal proof",
+                "prove that",
+                "theorem",
+                "proof",
+                "derive",
+                "complex problem",
+                "multi-step",
+                "multi step",
+                "multi-step reasoning",
+                "multi step reasoning",
+                # Code / debugging / refactor
+                "analyze this code",
+                "analyse this code",
+                "refactor this",
+                "optimize this",
+                "optimise this",
+                "debug this",
+                # Domain-heavy scientific / astrophysics cues
+                "penrose process",
+                "kerr spacetime",
+                "black hole",
+                "black holes",
+                "superradiance",
+                "general relativity",
+                "quantum field theory",
+                "event horizon",
+                "astrophysics",
+                "space science",
+                # Generic high-effort cues
+                "very advanced",
+                "advanced problem",
+                "advanced",
+                "pro-level",
+                "pro level",
+                "deeper reasoning",
+                "deep reasoning",
+                "explain your reasoning",
             ]
-        )
+            heavy_hit = any(kw in lower for kw in heavy_keywords)
 
-        ultra_hard_hit = any(
-            phrase in lower
-            for phrase in [
-                "ultra-hard problem",
-                "state-of-the-art research",
-                "state of the art research",
-                "multi-hour reasoning",
-                "supercomputer-level reasoning",
-                "maximum logical depth",
-            ]
-        )
-
-        # Extremely large / clearly heavy → gpt-5-pro.
-        if pro_requested or char_len > 4000 or ultra_hard_hit:
-            return "gpt-5-pro"
-
-        # Reasoning-related valves or heavy keywords → choose among thinking models.
-        if reasoning_on or heavy_hit or "explain your reasoning" in lower:
-            if "minimal" in lower:
-                return "gpt-5-thinking-minimal"
-            if (
-                "high" in lower
-                or "very detailed" in lower
-                or "deep" in lower
-                or "pro-level" in lower
-                or "pro level" in lower
-            ):
-                return "gpt-5-thinking-high"
-            return "gpt-5-thinking"
-
-        # Medium / long general prompts → gpt-5.1 (fast GPT-5-level reasoning).
-        if char_len > 800 or word_len > 160:
-            return "gpt-5.1"
-
-        # Short, truly simple requests → gpt-4.1-nano for maximum cost
-        # savings. We avoid routing to nano if the text looks conceptually
-        # heavy (even if short), e.g. contains advanced / scientific cues.
-        if (
-            char_len < 80
-            and word_len < 15
-            and not heavy_hit
-            and not any(
-                kw in lower
-                for kw in [
-                    "explain",
-                    "detail",
-                    "detailed",
-                    "derive",
-                    "advanced",
-                    "pro-level",
-                    "pro level",
-                    "theorem",
-                    "proof",
-                    "derive",
-                    "penrose",
-                    "kerr",
-                    "black hole",
-                    "astrophysics",
-                    "space science",
+            # Explicit Pro model requests.
+            pro_requested = any(
+                phrase in lower
+                for phrase in [
+                    "use gpt-5-pro",
+                    "use the pro model",
+                    "run with gpt-5-pro",
                 ]
             )
-            and not ("image" in lower or "picture" in lower or "photo" in lower)
-        ):
-            return "gpt-4.1-nano"
 
-        # Default general assistant choice → gpt-4o.
-        return "gpt-4o"
+            # Extra-strong signals that we should go straight to Pro.
+            ultra_hard_hit = any(
+                phrase in lower
+                for phrase in [
+                    "ultra-hard problem",
+                    "state-of-the-art research",
+                    "state of the art research",
+                    "multi-hour reasoning",
+                    "multi hour reasoning",
+                    "supercomputer-level reasoning",
+                    "supercomputer level reasoning",
+                    "maximum logical depth",
+                ]
+            )
+
+            # 3.1 Direct to GPT-5 Pro
+            if pro_requested or char_len > 4000 or ultra_hard_hit:
+                return "gpt-5-pro"
+
+            # 3.2 Thinking models (gpt-5 + reasoning.effort)
+            if reasoning_on or heavy_hit or "explain your reasoning" in lower:
+                # User hints about effort level.
+                if "minimal" in lower:
+                    return "gpt-5-thinking-minimal"
+                if (
+                    "high" in lower
+                    or "very detailed" in lower
+                    or "deep" in lower
+                    or "pro-level" in lower
+                    or "pro level" in lower
+                ):
+                    return "gpt-5-thinking-high"
+                # Default thinking level.
+                return "gpt-5-thinking"
+
+            # 3.3 Medium / long prompts → gpt-5.1
+            if char_len > 800 or word_len > 160:
+                return "gpt-5.1"
+
+            # 3.4 Short, truly simple prompts → gpt-4.1-nano
+            if (
+                char_len < 80
+                and word_len < 15
+                and not heavy_hit
+                and not any(
+                    kw in lower
+                    for kw in [
+                        "explain",
+                        "detail",
+                        "detailed",
+                        "derive",
+                        "advanced",
+                        "pro-level",
+                        "pro level",
+                        "theorem",
+                        "proof",
+                        "penrose",
+                        "kerr",
+                        "black hole",
+                        "black holes",
+                        "astrophysics",
+                        "space science",
+                    ]
+                )
+                and not ("image" in lower or "picture" in lower or "photo" in lower)
+            ):
+                return "gpt-4.1-nano"
+
+            # 3.5 Default general assistant choice → gpt-4o
+            return "gpt-4o"
+
+        # --------------------------------------------------------------
+        # 4. Primary path: call a small router model
+        # --------------------------------------------------------------
+        router_model = getattr(valves, "GPT5_AUTO_ROUTER_MODEL", "") or "gpt-4.1-nano"
+
+        allowed_targets = {
+            "gpt-4.1-nano",
+            "gpt-4o",
+            "gpt-5.1",
+            "gpt-5-thinking-minimal",
+            "gpt-5-thinking",
+            "gpt-5-thinking-high",
+            "gpt-5-pro",
+        }
+
+        # Light metadata the router can use.
+        metadata = {
+            "approx_char_len": char_len,
+            "approx_word_len": word_len,
+            "reasoning_on": reasoning_on,
+            "speed_over_quality": speed_over_quality,
+        }
+
+        system_instructions = (
+            "You are a routing controller for an OpenAI Responses manifold.\n"
+            "Your job is to examine the user prompt (and some metadata) and choose\n"
+            "the CHEAPEST model that can reasonably handle the task with good quality.\n"
+            "\n"
+            "You must respond with EXACTLY ONE of these model IDs (no extra text):\n"
+            "  - gpt-4.1-nano\n"
+            "  - gpt-4o\n"
+            "  - gpt-5.1\n"
+            "  - gpt-5-thinking-minimal\n"
+            "  - gpt-5-thinking\n"
+            "  - gpt-5-thinking-high\n"
+            "  - gpt-5-pro\n"
+            "\n"
+            "Model guidance (based on OpenAI documentation):\n"
+            "- Use gpt-4.1-nano for very short, simple prompts that are not deeply\n"
+            "  technical, not code-heavy, and do not require detailed reasoning.\n"
+            "- Use gpt-4o for normal chat, everyday questions, lightweight coding,\n"
+            "  and typical multimodal use where ultra-deep reasoning is not required.\n"
+            "- Use gpt-5.1 when the prompt is long or somewhat complex, where extra\n"
+            "  reasoning, robustness, or instruction-following is helpful, but full\n"
+            "  step-by-step reasoning is not strictly necessary.\n"
+            "- Use gpt-5-thinking-minimal / gpt-5-thinking / gpt-5-thinking-high when\n"
+            "  the user explicitly asks for step-by-step or detailed reasoning, or\n"
+            "  when the task clearly needs multi-step logical reasoning, complex\n"
+            "  math/physics, or deep code analysis.\n"
+            "- Prefer gpt-5-thinking-minimal for light reasoning, gpt-5-thinking for\n"
+            "  most reasoning tasks, and gpt-5-thinking-high for especially hard ones.\n"
+            "- Use gpt-5-pro ONLY when the user explicitly requests the Pro model, or\n"
+            "  when the task is clearly extremely difficult, research-grade, or very\n"
+            "  long and complex, where the absolute best quality is required.\n"
+            "\n"
+            "Additional rules:\n"
+            "- If SPEED_OVER_QUALITY is true, bias towards cheaper models when in doubt.\n"
+            "- If reasoning_on is true, it is OK to choose a thinking model more often.\n"
+            "- Never invent new model names. Output must be exactly one of the list above.\n"
+        )
+
+        router_body = ResponsesBody(
+            model=router_model,
+            instructions=system_instructions,
+            input=(
+                "Routing metadata (JSON): "
+                + json.dumps(metadata, separators=(",", ":"))
+                + "\n\nUser prompt:\n"
+                + text
+            ),
+            stream=False,
+            store=False,
+            max_output_tokens=16,
+            tools=None,
+            include=None,
+        )
+
+        routed: str = ""
+
+        try:
+            response = await self.send_openai_responses_nonstreaming_request(
+                router_body.model_dump(exclude_none=True),
+                api_key=valves.API_KEY,
+                base_url=valves.BASE_URL,
+            )
+
+            text_parts: list[str] = []
+            for item in response.get("output", []):
+                if item.get("type") != "message":
+                    continue
+                for content in item.get("content", []):
+                    if content.get("type") == "output_text":
+                        text_parts.append(content.get("text", ""))
+
+            routed_raw = "".join(text_parts).strip()
+            if routed_raw:
+                # In case the model adds extra whitespace or commentary, just
+                # take the first token as the candidate model name.
+                routed = routed_raw.split()[0]
+
+        except Exception as exc:
+            # If the router model fails (network, auth, rate limit, etc),
+            # we will fall back to the original heuristic below.
+            if hasattr(self, "logger"):
+                self.logger.exception(
+                    "gpt-5-auto router model failed; falling back to heuristic",
+                    exc_info=exc,
+                )
+            routed = ""
+
+        # If the router gave us something valid, use it.
+        if routed in allowed_targets:
+        	# small-model router was used
+            return routed + self._debug_tag(valves, "router")
+
+        # Otherwise, fall back to your original heuristic logic.
+        fallback_choice = heuristic_route()
+        return fallback_choice + self._debug_tag(valves, "fallback")
+
 
     # 4.8 Internal Static Helpers
+
     def _merge_valves(self, global_valves, user_valves) -> "Pipe.Valves":
         """Merge user-level valves into the global defaults.
 
@@ -2544,6 +2703,10 @@ class ExpandableStatusIndicator:
     ```python
     assistant_message = "Let's work step‑by‑step.\n"
 
+        # Fallback to original heuristic logic if router misbehaves.
+        fallback_choice = heuristic_route()
+        return fallback_choice + self._debug_tag(valves, "fallback")
+        
     status = ExpandableStatusIndicator(event_emitter=__event_emitter__)
 
     assistant_message = await status.add(
