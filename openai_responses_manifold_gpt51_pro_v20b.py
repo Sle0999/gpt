@@ -2189,11 +2189,15 @@ class Pipe:
         if not valves.SHOW_COSTS:
             return ""
 
+        include_image_costs = valves.INCLUDE_IMAGE_COSTS or bool(
+            _extract_image_count(usage)
+        )
+
         cost_line, _, _ = format_cost_summary(
             model,
             usage,
             chat_id=chat_id,
-            include_image_costs=valves.INCLUDE_IMAGE_COSTS,
+            include_image_costs=include_image_costs,
             pseudo_model=pseudo_model,
         )
 
