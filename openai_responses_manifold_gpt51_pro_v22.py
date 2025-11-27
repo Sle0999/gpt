@@ -3216,7 +3216,24 @@ def format_cost_summary(
 
     def _format_model_label() -> str:
         display_pseudo = (pseudo_model or model or "").strip()
-        pseudo_key_source = display_pseudo.rsplit(".", 1)[-1] if display_pseudo else ""
+
+        def _normalize_display_to_key(raw: str) -> str:
+            """Strip router/debug adornments and provider prefixes for lookups."""
+
+            # Drop router debug suffixes like " [fallback]" while keeping the
+            # visible display name intact for the user-facing label.
+            without_debug = raw.split("[", 1)[0].strip()
+
+            # Remove any provider prefix such as "openai/" before mapping.
+            provider_stripped = without_debug.split("/", 1)[-1].strip()
+
+            return provider_stripped
+
+        pseudo_key_source = (
+            _normalize_display_to_key(display_pseudo).rsplit(".", 1)[-1]
+            if display_pseudo
+            else ""
+        )
         pseudo_key = pseudo_key_source.lower()
         normalized_actual = _normalize_model_for_pricing(model)
         mapping = {
