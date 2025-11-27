@@ -198,8 +198,9 @@ DETAILS_RE = re.compile(
 # Matches any previously appended cost summary lines so they can be replaced
 # with the latest one and avoid duplicates like:
 # [approx cost this reply (...): $X]
-# [approx cost this reply (...): $X | approx total: $Y]
-COST_LINE_RE = re.compile(r"\[approx cost this reply[^\]]*\]", re.I)
+# [approx cost 1 image (gpt-image-1): $Y | approx total: $Z]
+# [approx total: $Z]
+COST_LINE_RE = re.compile(r"\[approx (?:cost|total)[^\]]*\]", re.I)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -2884,9 +2885,10 @@ def format_cost_summary(
     Returns a tuple of ``(summary_text, cost_this_call, cumulative_cost)``.
     If cost cannot be estimated, the text will be an empty string.
     """
-    cost_this = estimate_response_cost_usd(
-        model, usage, include_image_costs=include_image_costs
-    )
+    text_cost = estimate_response_cost_usd(model, usage, include_image_costs=False)
+    image_count = _extract_image_count(usage) if include_image_costs else 0
+    image_cost = 0.04 * image_count if image_count else 0.0
+    cost_this = text_cost + image_cost
     if cost_this <= 0:
         return ("", 0.0, 0.0)
 
@@ -2943,24 +2945,32 @@ def format_cost_summary(
         return f"{display_name} → {actual_label}{effort_label}"
 
     label_model = _format_model_label()
-    image_count = _extract_image_count(usage) if include_image_costs else 0
-    image_note = ""
+
+    lines: list[str] = []
+    if text_cost:
+        text_line = f"[approx cost this reply ({label_model}): ${text_cost:.6f}]"
+        if not image_count and chat_id:
+            text_line = (
+                f"[approx cost this reply ({label_model}): ${text_cost:.6f}"
+                f" | approx total: ${cumulative:.6f}]"
+            )
+        lines.append(text_line)
+
     if image_count:
-        estimated_image_cost = 0.04 * image_count
-        image_note = (
-            " (includes ~${cost:.6f} for {count} images at $0.04 each; image cost "
-            "is an estimate)"
-        ).format(cost=estimated_image_cost, count=image_count)
-
-    if chat_id:
-        line = (
-            f"[approx cost this reply ({label_model}): ${cost_this:.6f}"
-            f"{image_note} | approx total: ${cumulative:.6f}]"
+        plural = "image" if image_count == 1 else "images"
+        image_line = (
+            f"[approx cost {image_count} {plural}  (gpt-image-1): ${image_cost:.6f}"
         )
-    else:
-        line = f"[approx cost this reply ({label_model}): ${cost_this:.6f}{image_note}]"
+        if chat_id:
+            image_line += f" | approx total: ${cumulative:.6f}"
+        image_line += "]"
+        lines.append(image_line)
 
-    return (line, cost_this, cumulative)
+    if chat_id or image_count:
+        lines.append(f"[approx total: ${cumulative:.6f}]")
+
+    cost_block = "\n".join(lines)
+    return (cost_block, cost_this, cumulative)
 
 
 def wrap_code_block(text: str, language: str = "python") -> str:
