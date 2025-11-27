@@ -51,7 +51,9 @@ Supports an extensive set of **pseudo models** that map to real OpenAI models wi
 | --------------------- | ------------ | ------ |
 | gpt-5-thinking        | gpt-5        | medium |
 | gpt-5-thinking-high   | gpt-5        | high   |
+| gpt-5.1-thinking      | gpt-5.1      | medium |
 | gpt-5.1-thinking-high | gpt-5.1      | high   |
+| gpt-5.1-thinking-minimal | gpt-5.1   | minimal |
 | o3-mini-high          | o3-mini      | high   |
 | o4-mini-high          | o4-mini      | high   |
 

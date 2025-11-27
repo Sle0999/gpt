@@ -57,6 +57,9 @@ MODEL_PRICING_USD_PER_MTOK = {
     "gpt-5-thinking": {"input": 1.25, "output": 10.00},
     "gpt-5-thinking-high": {"input": 1.25, "output": 10.00},
     "gpt-5-thinking-minimal": {"input": 1.25, "output": 10.00},
+    "gpt-5.1-thinking": {"input": 1.25, "output": 10.00},
+    "gpt-5.1-thinking-high": {"input": 1.25, "output": 10.00},
+    "gpt-5.1-thinking-minimal": {"input": 1.25, "output": 10.00},
     # Pro tier – significantly more expensive
     "gpt-5-pro": {"input": 15.00, "output": 120.00},
     # GPT‑4.1 / 4o family (legacy but still common in WebUI configs)
@@ -250,7 +253,8 @@ class CompletionsBody(BaseModel):
             "gpt-5-thinking-mini": ("gpt-5-mini", "medium"),
             "gpt-5-thinking-mini-minimal": ("gpt-5-mini", "minimal"),
             # GPT-5.1 Thinking family (pseudo IDs that pin reasoning effort)
-            "gpt-5.1-thinking": ("gpt-5.1", None),
+            "gpt-5.1-thinking": ("gpt-5.1", "medium"),
+            "gpt-5.1-thinking-minimal": ("gpt-5.1", "minimal"),
             "gpt-5.1-thinking-none": ("gpt-5.1", "none"),
             "gpt-5.1-thinking-low": ("gpt-5.1", "low"),
             "gpt-5.1-thinking-medium": ("gpt-5.1", "medium"),
@@ -722,11 +726,14 @@ class Pipe:
 
         # 2) Models
         MODEL_ID: str = Field(
-            default="gpt-5-auto, gpt-5.1, gpt-5-pro, gpt-5-chat-latest, gpt-5-thinking, gpt-5-thinking-high, gpt-5-thinking-minimal, gpt-4.1-nano, chatgpt-4o-latest, o3, gpt-4o",
+            default="gpt-5-auto, gpt-5.1, gpt-5-pro, gpt-5-chat-latest, gpt-5.1-thinking, gpt-5.1-thinking-high, gpt-5.1-thinking-minimal, gpt-5-thinking, gpt-5-thinking-high, gpt-5-thinking-minimal, gpt-4.1-nano, chatgpt-4o-latest, o3, gpt-4o",
             description=(
                 "Comma separated OpenAI model IDs. Each ID becomes a model entry in WebUI. "
                 "Supports all official OpenAI model IDs and pseudo IDs: "
                 "gpt-5-auto, "
+                "gpt-5.1-thinking, "
+                "gpt-5.1-thinking-minimal, "
+                "gpt-5.1-thinking-high, "
                 "gpt-5-thinking, "
                 "gpt-5-thinking-minimal, "
                 "gpt-5-thinking-high, "
@@ -2445,11 +2452,11 @@ class Pipe:
             if pro_requested or char_len > 4000 or ultra_hard_hit:
                 return "gpt-5-pro"
 
-            # 3.2 Thinking models (gpt-5 + reasoning.effort)
+            # 3.2 Thinking models (gpt-5.1 + reasoning.effort)
             if reasoning_on or heavy_hit or "explain your reasoning" in lower:
                 # User hints about effort level.
                 if "minimal" in lower:
-                    return "gpt-5-thinking-minimal"
+                    return "gpt-5.1-thinking-minimal"
                 if (
                     "high" in lower
                     or "very detailed" in lower
@@ -2457,9 +2464,9 @@ class Pipe:
                     or "pro-level" in lower
                     or "pro level" in lower
                 ):
-                    return "gpt-5-thinking-high"
+                    return "gpt-5.1-thinking-high"
                 # Default thinking level.
-                return "gpt-5-thinking"
+                return "gpt-5.1-thinking"
 
             # 3.3 Medium / long prompts → gpt-5.1
             if char_len > 800 or word_len > 160:
@@ -2506,9 +2513,9 @@ class Pipe:
             "gpt-4.1-nano",
             "gpt-4o",
             "gpt-5.1",
-            "gpt-5-thinking-minimal",
-            "gpt-5-thinking",
-            "gpt-5-thinking-high",
+            "gpt-5.1-thinking-minimal",
+            "gpt-5.1-thinking",
+            "gpt-5.1-thinking-high",
             "gpt-5-pro",
         }
 
@@ -2529,9 +2536,9 @@ class Pipe:
             "  - gpt-4.1-nano\n"
             "  - gpt-4o\n"
             "  - gpt-5.1\n"
-            "  - gpt-5-thinking-minimal\n"
-            "  - gpt-5-thinking\n"
-            "  - gpt-5-thinking-high\n"
+            "  - gpt-5.1-thinking-minimal\n"
+            "  - gpt-5.1-thinking\n"
+            "  - gpt-5.1-thinking-high\n"
             "  - gpt-5-pro\n"
             "\n"
             "Model guidance (based on OpenAI documentation):\n"
@@ -2542,12 +2549,12 @@ class Pipe:
             "- Use gpt-5.1 when the prompt is long or somewhat complex, where extra\n"
             "  reasoning, robustness, or instruction-following is helpful, but full\n"
             "  step-by-step reasoning is not strictly necessary.\n"
-            "- Use gpt-5-thinking-minimal / gpt-5-thinking / gpt-5-thinking-high when\n"
-            "  the user explicitly asks for step-by-step or detailed reasoning, or\n"
+            "- Use gpt-5.1-thinking-minimal / gpt-5.1-thinking / gpt-5.1-thinking-high\n"
+            "  when the user explicitly asks for step-by-step or detailed reasoning, or\n"
             "  when the task clearly needs multi-step logical reasoning, complex\n"
             "  math/physics, or deep code analysis.\n"
-            "- Prefer gpt-5-thinking-minimal for light reasoning, gpt-5-thinking for\n"
-            "  most reasoning tasks, and gpt-5-thinking-high for especially hard ones.\n"
+            "- Prefer gpt-5.1-thinking-minimal for light reasoning, gpt-5.1-thinking for\n"
+            "  most reasoning tasks, and gpt-5.1-thinking-high for especially hard ones.\n"
             "- Use gpt-5-pro ONLY when the user explicitly requests the Pro model, or\n"
             "  when the task is clearly extremely difficult, research-grade, or very\n"
             "  long and complex, where the absolute best quality is required.\n"
@@ -3243,6 +3250,9 @@ def format_cost_summary(
             "gpt-5-thinking-mini": "gpt-5-mini",
             "gpt-5-thinking-mini-minimal": "gpt-5-mini",
             "gpt-5-pro": "gpt-5-pro",
+            "gpt-5.1-thinking": "gpt-5.1",
+            "gpt-5.1-thinking-high": "gpt-5.1",
+            "gpt-5.1-thinking-minimal": "gpt-5.1",
             "gpt-5.1": "gpt-5.1",
             "gpt-4.1-mini": "gpt-4.1-mini",
             "gpt-4.1-nano": "gpt-4.1-nano",
@@ -3255,7 +3265,8 @@ def format_cost_summary(
             "gpt-5-thinking-minimal": "minimal",
             "gpt-5-thinking-mini": "medium",
             "gpt-5-thinking-mini-minimal": "minimal",
-            "gpt-5.1-thinking": None,
+            "gpt-5.1-thinking": "medium",
+            "gpt-5.1-thinking-minimal": "minimal",
             "gpt-5.1-thinking-none": "none",
             "gpt-5.1-thinking-low": "low",
             "gpt-5.1-thinking-medium": "medium",
