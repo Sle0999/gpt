@@ -230,14 +230,12 @@ class CompletionsBody(BaseModel):
 
         # Alias mapping: pseudo ID -> (real model, reasoning effort)
         aliases = {
-            # GPT-5 Thinking family
-            "gpt-5-thinking": ("gpt-5", None),
+            # GPT-5 Thinking family (pseudo → real model + reasoning effort)
+            "gpt-5-thinking": ("gpt-5", "medium"),
             "gpt-5-thinking-minimal": ("gpt-5", "minimal"),
             "gpt-5-thinking-high": ("gpt-5", "high"),
-            "gpt-5-thinking-mini": ("gpt-5-mini", None),
+            "gpt-5-thinking-mini": ("gpt-5-mini", "medium"),
             "gpt-5-thinking-mini-minimal": ("gpt-5-mini", "minimal"),
-            "gpt-5-thinking-nano": ("gpt-5-nano", None),
-            "gpt-5-thinking-nano-minimal": ("gpt-5-nano", "minimal"),
             # GPT-5.1 Thinking family (pseudo IDs that pin reasoning effort)
             "gpt-5.1-thinking": ("gpt-5.1", None),
             "gpt-5.1-thinking-none": ("gpt-5.1", "none"),
@@ -249,6 +247,10 @@ class CompletionsBody(BaseModel):
             "gpt-5-pro-high": ("gpt-5-pro", "high"),
             # Placeholder router
             "gpt-5-auto": ("gpt-5.1", None),
+            # Additional pseudo → real mappings
+            "gpt-5.1": ("gpt-5.1", None),
+            "gpt-4.1-nano": ("gpt-4.1-nano", None),
+            "gpt-4.1-mini": ("gpt-4.1-mini", None),
             # Backwards compatibility
             "o3-mini-high": ("o3-mini", "high"),
             "o4-mini-high": ("o4-mini", "high"),
@@ -905,6 +907,7 @@ class Pipe:
         openwebui_model_id = __metadata__.get("model", {}).get(
             "id", ""
         )  # Full model ID, e.g. "openai_responses.gpt-4o"
+        requested_model_raw = str(body.get("model", "") or "").strip()
         user_identifier = __user__[
             valves.PROMPT_CACHE_KEY
         ]  # Use 'id' or 'email' as configured
@@ -942,6 +945,12 @@ class Pipe:
             ),
         )
 
+        pseudo_model_display = (
+            (openwebui_model_id.split(".")[-1])
+            if openwebui_model_id
+            else (requested_model_raw.split(".")[-1] if requested_model_raw else "")
+        )
+
         # Detect if task model (generate title, generate tags, etc.), handle it separately
         if __task__:
             self.logger.info("Detected task model: %s", __task__)
@@ -968,6 +977,7 @@ class Pipe:
                 messages=[{"role": "user", "content": ""}],
             )
             responses_body.model = alias_body.model
+            pseudo_model_display = routed_model
 
             # If the alias set a reasoning_effort, fold it into the
             # ResponsesBody.reasoning dict without clobbering anything
@@ -985,6 +995,7 @@ class Pipe:
             responses_body.stream = False
 
         # Normalize to family-level model name (e.g., 'o3' from 'o3-2025-04-16') to be used for feature detection.
+        __metadata__["pseudo_model_display"] = pseudo_model_display
         model_family = re.sub(r"-\d{4}-\d{2}-\d{2}$", "", responses_body.model)
 
         # Enforce reasoning.effort for GPT-5 Pro: API only accepts 'high' for this model.
@@ -1492,48 +1503,46 @@ class Pipe:
             # Optionally append a human-readable cost summary to the final
             # assistant message so it remains visible in the transcript instead
             # of flashing as a transient message.
-            if valves.SHOW_COSTS and total_usage:
-                chat_id = metadata.get("chat_id")
-                pseudo_model = (
-                    openwebui_model_id.split(".")[-1]
-                    if openwebui_model_id
-                    else body.model
-                )
-                cost_line, _, _ = format_cost_summary(
-                    body.model,
-                    total_usage,
-                    chat_id=chat_id,
-                    include_image_costs=valves.INCLUDE_IMAGE_COSTS,
-                    pseudo_model=pseudo_model,
-                )
-                if cost_line:
-                    if valves.INLINE_COSTS_IN_MESSAGE:
-                        # Inline mode: append the cost summary to the assistant
-                        # message content so it is visible in the transcript.
-                        if cost_line not in assistant_message:
-                            if assistant_message:
-                                assistant_message = (
-                                    f"{assistant_message}\n\n{cost_line}"
-                                )
-                            else:
-                                assistant_message = cost_line
-                            if event_emitter is not None:
-                                await event_emitter(
-                                    {
-                                        "type": "chat:message",
-                                        "data": {"content": assistant_message},
-                                    }
-                                )
-                    else:
-                        # Notification mode: do NOT modify the assistant text.
-                        # Instead, surface the approximate cost as a toast-style
-                        # notification so that voice / TTS features do not read
-                        # it aloud.
-                        await self._emit_notification(
-                            event_emitter,
-                            content=cost_line,
-                            level="info",
-                        )
+            cost_line = self._build_cost_line_once(
+                valves,
+                total_usage if total_usage else None,
+                model=body.model,
+                chat_id=metadata.get("chat_id"),
+                pseudo_model=(
+                    metadata.get("pseudo_model_display")
+                    or (
+                        openwebui_model_id.split(".")[-1]
+                        if openwebui_model_id
+                        else body.model
+                    )
+                ),
+            )
+            if cost_line:
+                if valves.INLINE_COSTS_IN_MESSAGE:
+                    # Inline mode: append the cost summary to the assistant
+                    # message content so it is visible in the transcript.
+                    if cost_line not in assistant_message:
+                        if assistant_message:
+                            assistant_message = f"{assistant_message}\n\n{cost_line}"
+                        else:
+                            assistant_message = cost_line
+                        if event_emitter is not None:
+                            await event_emitter(
+                                {
+                                    "type": "chat:message",
+                                    "data": {"content": assistant_message},
+                                }
+                            )
+                else:
+                    # Notification mode: do NOT modify the assistant text.
+                    # Instead, surface the approximate cost as a toast-style
+                    # notification so that voice / TTS features do not read
+                    # it aloud.
+                    await self._emit_notification(
+                        event_emitter,
+                        content=cost_line,
+                        level="info",
+                    )
 
             # Emit completion (middleware.py also does this so this just covers if there is a downstream error)
             await self._emit_completion(
@@ -1746,38 +1755,38 @@ class Pipe:
             # If enabled, append an approximate cost summary to the end of the
             # returned text.  Non‑streaming calls do not emit additional
             # ``chat:message`` events, so we modify the text directly.
-            if valves.SHOW_COSTS and total_usage:
-                chat_id = metadata.get("chat_id")
-                pseudo_model = (
-                    openwebui_model_id.split(".")[-1]
-                    if openwebui_model_id
-                    else body.model
-                )
-                cost_line, _, _ = format_cost_summary(
-                    body.model,
-                    total_usage,
-                    chat_id=chat_id,
-                    include_image_costs=valves.INCLUDE_IMAGE_COSTS,
-                    pseudo_model=pseudo_model,
-                )
-                if cost_line:
-                    if valves.INLINE_COSTS_IN_MESSAGE:
-                        # Inline mode: append the cost summary directly to the
-                        # assistant text returned for this call.
-                        if cost_line not in final_text:
-                            if final_text:
-                                final_text = f"{final_text}\n\n{cost_line}"
-                            else:
-                                final_text = cost_line
-                    else:
-                        # Notification mode: do NOT change the assistant reply
-                        # text. Instead, emit the approximate cost as a
-                        # toast-style notification only.
-                        await self._emit_notification(
-                            event_emitter,
-                            content=cost_line,
-                            level="info",
-                        )
+            cost_line = self._build_cost_line_once(
+                valves,
+                total_usage if total_usage else None,
+                model=body.model,
+                chat_id=metadata.get("chat_id"),
+                pseudo_model=(
+                    metadata.get("pseudo_model_display")
+                    or (
+                        openwebui_model_id.split(".")[-1]
+                        if openwebui_model_id
+                        else body.model
+                    )
+                ),
+            )
+            if cost_line:
+                if valves.INLINE_COSTS_IN_MESSAGE:
+                    # Inline mode: append the cost summary directly to the
+                    # assistant text returned for this call.
+                    if cost_line not in final_text:
+                        if final_text:
+                            final_text = f"{final_text}\n\n{cost_line}"
+                        else:
+                            final_text = cost_line
+                else:
+                    # Notification mode: do NOT change the assistant reply
+                    # text. Instead, emit the approximate cost as a
+                    # toast-style notification only.
+                    await self._emit_notification(
+                        event_emitter,
+                        content=cost_line,
+                        level="info",
+                    )
 
             return final_text
 
@@ -2150,6 +2159,30 @@ class Pipe:
             {"type": "notification", "data": {"type": level, "content": content}}
         )
 
+    def _build_cost_line_once(
+        self,
+        valves: "Pipe.Valves",
+        usage: dict | None,
+        *,
+        model: str,
+        chat_id: str | None,
+        pseudo_model: str | None,
+    ) -> str:
+        """Return a formatted cost line if the SHOW_COSTS valve is enabled."""
+
+        if not valves.SHOW_COSTS:
+            return ""
+
+        cost_line, _, _ = format_cost_summary(
+            model,
+            usage,
+            chat_id=chat_id,
+            include_image_costs=valves.INCLUDE_IMAGE_COSTS,
+            pseudo_model=pseudo_model,
+        )
+
+        return cost_line
+
     async def _route_gpt5_auto(
         self,
         last_user_message: str,
@@ -2221,8 +2254,12 @@ class Pipe:
             "deeply explain",
             "in depth",
             "detailed explanation",
+            "detailed",
             "formal proof",
             "prove that",
+            "theorem",
+            "proof",
+            "derive",
             "complex problem",
             "multi-step",
             "multi step",
@@ -2250,10 +2287,12 @@ class Pipe:
             # Generic high-effort cues
             "very advanced",
             "advanced problem",
+            "advanced",
             "pro-level",
             "pro level",
             "deeper reasoning",
             "deep reasoning",
+            "explain",
         ]
         heavy_hit = any(kw in lower for kw in heavy_keywords)
 
@@ -2304,8 +2343,8 @@ class Pipe:
         # savings. We avoid routing to nano if the text looks conceptually
         # heavy (even if short), e.g. contains advanced / scientific cues.
         if (
-            char_len < 120
-            and word_len < 25
+            char_len < 80
+            and word_len < 15
             and not heavy_hit
             and not any(
                 kw in lower
@@ -2313,6 +2352,7 @@ class Pipe:
                     "explain",
                     "detail",
                     "detailed",
+                    "derive",
                     "advanced",
                     "pro-level",
                     "pro level",
@@ -2797,10 +2837,12 @@ def format_cost_summary(
             "gpt-5-thinking": "gpt-5",
             "gpt-5-thinking-minimal": "gpt-5",
             "gpt-5-thinking-mini": "gpt-5-mini",
+            "gpt-5-thinking-mini-minimal": "gpt-5-mini",
             "gpt-5-pro": "gpt-5-pro",
             "gpt-5.1": "gpt-5.1",
             "gpt-4.1-mini": "gpt-4.1-mini",
             "gpt-4.1-nano": "gpt-4.1-nano",
+            "gpt-5-auto": normalized_actual,
         }
 
         actual_label = mapping.get(pseudo, normalized_actual)
