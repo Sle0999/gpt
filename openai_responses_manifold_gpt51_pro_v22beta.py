@@ -3,7 +3,7 @@ title: OpenAI Responses API Manifold
 id: openai_responses
 description: Brings OpenAI Response API support to Open WebUI, enabling features not possible via Completions API.
 required_open_webui_version: 0.6.3
-version: 21
+version: 22
 """
 
 from __future__ import annotations
