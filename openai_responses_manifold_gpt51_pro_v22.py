@@ -622,6 +622,7 @@ class ResponsesBody(BaseModel):
             "response_format",  # Replaced with 'text' in Responses API
             "suffix",  # Responses API does not support suffix
             "stream_options",  # Responses API does not support stream options
+            "debug",  # UI debug toggle (not part of Responses API)
             "audio",  # Responses API does not support audio input
             "function_call",  # Deprecated in favor of 'tool_choice'.
             "functions",  # Deprecated in favor of 'tools'.
