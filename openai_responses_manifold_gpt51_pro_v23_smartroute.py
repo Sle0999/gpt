@@ -50,6 +50,7 @@ from urllib.parse import urlparse
 MODEL_PRICING_USD_PER_MTOK = {
     # GPT‑5 family (standard API pricing)
     "gpt-5.1": {"input": 1.25, "output": 10.00},
+    "gpt-5.1-reasoning": {"input": 1.25, "output": 10.00},
     "gpt-5": {"input": 1.25, "output": 10.00},
     "gpt-5-chat-latest": {"input": 1.25, "output": 10.00},
     "gpt-5.1-chat-latest": {"input": 1.25, "output": 10.00},
@@ -103,6 +104,7 @@ FEATURE_SUPPORT = {
     "web_search_tool": {
         "gpt-5",
         "gpt-5.1",
+        "gpt-5.1-reasoning",
         "gpt-5.1-mini",
         "gpt-5.1-nano",
         "gpt-5-pro",
@@ -120,6 +122,7 @@ FEATURE_SUPPORT = {
     "image_gen_tool": {
         "gpt-5",
         "gpt-5.1",
+        "gpt-5.1-reasoning",
         "gpt-5.1-mini",
         "gpt-5.1-nano",
         "gpt-5-pro",
@@ -135,6 +138,7 @@ FEATURE_SUPPORT = {
     "function_calling": {
         "gpt-5",
         "gpt-5.1",
+        "gpt-5.1-reasoning",
         "gpt-5.1-mini",
         "gpt-5.1-nano",
         "gpt-5-pro",
@@ -155,6 +159,7 @@ FEATURE_SUPPORT = {
     "reasoning": {
         "gpt-5",
         "gpt-5.1",
+        "gpt-5.1-reasoning",
         "gpt-5.1-mini",
         "gpt-5.1-nano",
         "gpt-5-pro",
@@ -170,6 +175,7 @@ FEATURE_SUPPORT = {
     "reasoning_summary": {
         "gpt-5",
         "gpt-5.1",
+        "gpt-5.1-reasoning",
         "gpt-5.1-mini",
         "gpt-5.1-nano",
         "gpt-5-pro",
@@ -187,6 +193,7 @@ FEATURE_SUPPORT = {
     "verbosity": {
         "gpt-5",
         "gpt-5.1",
+        "gpt-5.1-reasoning",
         "gpt-5.1-mini",
         "gpt-5.1-nano",
         "gpt-5-pro",
@@ -255,6 +262,13 @@ class CompletionsBody(BaseModel):
             "gpt-5.1-thinking-low": ("gpt-5.1", "low"),
             "gpt-5.1-thinking-medium": ("gpt-5.1", "medium"),
             "gpt-5.1-thinking-high": ("gpt-5.1", "high"),
+            # GPT-5.1 Reasoning (official model IDs with optional effort pins)
+            "gpt-5.1-reasoning": ("gpt-5.1-reasoning", None),
+            "gpt-5.1-reasoning-none": ("gpt-5.1-reasoning", "none"),
+            "gpt-5.1-reasoning-minimal": ("gpt-5.1-reasoning", "minimal"),
+            "gpt-5.1-reasoning-low": ("gpt-5.1-reasoning", "low"),
+            "gpt-5.1-reasoning-medium": ("gpt-5.1-reasoning", "medium"),
+            "gpt-5.1-reasoning-high": ("gpt-5.1-reasoning", "high"),
             # GPT-5 Pro (always high effort)
             "gpt-5-pro": ("gpt-5-pro", "high"),
             "gpt-5-pro-high": ("gpt-5-pro", "high"),
@@ -722,7 +736,7 @@ class Pipe:
 
         # 2) Models
         MODEL_ID: str = Field(
-            default="gpt-5-auto, gpt-5.1, gpt-5-pro, gpt-5-chat-latest, gpt-5-thinking, gpt-5-thinking-high, gpt-5-thinking-minimal, gpt-4.1-nano, chatgpt-4o-latest, o3, gpt-4o",
+            default="gpt-5-auto, gpt-5.1, gpt-5.1-reasoning, gpt-5-pro, gpt-5-chat-latest, gpt-5-thinking, gpt-5-thinking-high, gpt-5-thinking-minimal, gpt-4.1-nano, chatgpt-4o-latest, o3, gpt-4o",
             description=(
                 "Comma separated OpenAI model IDs. Each ID becomes a model entry in WebUI. "
                 "Supports all official OpenAI model IDs and pseudo IDs: "
@@ -757,7 +771,7 @@ class Pipe:
         # 3) Reasoning & summaries
         REASONING_SUMMARY: Literal["auto", "concise", "detailed", "disabled"] = Field(
             default="disabled",
-            description="REQUIRES VERIFIED OPENAI ORG. Visible reasoning summary (auto | concise | detailed | disabled). Works on gpt-5, o3, o4-mini; ignored otherwise. Docs: https://platform.openai.com/docs/api-reference/responses/create#responses-create-reasoning",
+            description="REQUIRES VERIFIED OPENAI ORG. Visible reasoning summary (auto | concise | detailed | disabled). Works on gpt-5, gpt-5.1-reasoning, o3, o4-mini; ignored otherwise. Docs: https://platform.openai.com/docs/api-reference/responses/create#responses-create-reasoning",
         )
         PERSIST_REASONING_TOKENS: Literal["response", "conversation", "disabled"] = (
             Field(
@@ -2449,7 +2463,7 @@ class Pipe:
             if reasoning_on or heavy_hit or "explain your reasoning" in lower:
                 # User hints about effort level.
                 if "minimal" in lower:
-                    return "gpt-5-thinking-minimal"
+                    return "gpt-5.1-reasoning-minimal"
                 if (
                     "high" in lower
                     or "very detailed" in lower
@@ -2457,9 +2471,11 @@ class Pipe:
                     or "pro-level" in lower
                     or "pro level" in lower
                 ):
-                    return "gpt-5-thinking-high"
+                    return "gpt-5.1-reasoning-high"
+                if "low" in lower:
+                    return "gpt-5.1-reasoning-low"
                 # Default thinking level.
-                return "gpt-5-thinking"
+                return "gpt-5.1-reasoning"
 
             # 3.3 Medium / long prompts → gpt-5.1
             if char_len > 800 or word_len > 160:
@@ -2506,6 +2522,7 @@ class Pipe:
             "gpt-4.1-nano",
             "gpt-4o",
             "gpt-5.1",
+            "gpt-5.1-reasoning",
             "gpt-5-thinking-minimal",
             "gpt-5-thinking",
             "gpt-5-thinking-high",
@@ -2529,6 +2546,7 @@ class Pipe:
             "  - gpt-4.1-nano\n"
             "  - gpt-4o\n"
             "  - gpt-5.1\n"
+            "  - gpt-5.1-reasoning\n"
             "  - gpt-5-thinking-minimal\n"
             "  - gpt-5-thinking\n"
             "  - gpt-5-thinking-high\n"
@@ -2542,6 +2560,9 @@ class Pipe:
             "- Use gpt-5.1 when the prompt is long or somewhat complex, where extra\n"
             "  reasoning, robustness, or instruction-following is helpful, but full\n"
             "  step-by-step reasoning is not strictly necessary.\n"
+            "- Use gpt-5.1-reasoning when you want the newer 5.1 reasoning-optimized\n"
+            "  model (supports reasoning.effort) for step-by-step work but do not need\n"
+            "  the heavier gpt-5-thinking pseudo models or gpt-5-pro.\n"
             "- Use gpt-5-thinking-minimal / gpt-5-thinking / gpt-5-thinking-high when\n"
             "  the user explicitly asks for step-by-step or detailed reasoning, or\n"
             "  when the task clearly needs multi-step logical reasoning, complex\n"
@@ -3244,6 +3265,7 @@ def format_cost_summary(
             "gpt-5-thinking-mini-minimal": "gpt-5-mini",
             "gpt-5-pro": "gpt-5-pro",
             "gpt-5.1": "gpt-5.1",
+            "gpt-5.1-reasoning": "gpt-5.1-reasoning",
             "gpt-4.1-mini": "gpt-4.1-mini",
             "gpt-4.1-nano": "gpt-4.1-nano",
             "gpt-5-auto": normalized_actual,
@@ -3260,6 +3282,12 @@ def format_cost_summary(
             "gpt-5.1-thinking-low": "low",
             "gpt-5.1-thinking-medium": "medium",
             "gpt-5.1-thinking-high": "high",
+            "gpt-5.1-reasoning": None,
+            "gpt-5.1-reasoning-none": "none",
+            "gpt-5.1-reasoning-minimal": "minimal",
+            "gpt-5.1-reasoning-low": "low",
+            "gpt-5.1-reasoning-medium": "medium",
+            "gpt-5.1-reasoning-high": "high",
             "gpt-5-pro": "high",
         }.get(pseudo_key)
 
