@@ -1429,7 +1429,16 @@ class Pipe:
                     )
 
                 # Extract usage information from OpenAI response and pass-through to Open WebUI
-                usage = final_response.get("usage", {})
+                usage = dict(final_response.get("usage") or {})
+
+                image_count_estimate = _estimate_image_count_from_output(
+                    final_response.get("output")
+                )
+                if image_count_estimate:
+                    usage["image_count_estimate"] = usage.get(
+                        "image_count_estimate", 0
+                    ) + image_count_estimate
+
                 if usage:
                     usage["turn_count"] = 1
                     usage["function_call_count"] = sum(
@@ -1708,7 +1717,14 @@ class Pipe:
                                 status_content=content,
                             )
 
-                usage = response.get("usage", {})
+                usage = dict(response.get("usage") or {})
+
+                image_count_estimate = _estimate_image_count_from_output(items)
+                if image_count_estimate:
+                    usage["image_count_estimate"] = usage.get(
+                        "image_count_estimate", 0
+                    ) + image_count_estimate
+
                 if usage:
                     usage["turn_count"] = 1
                     usage["function_call_count"] = sum(
@@ -2760,6 +2776,39 @@ def _extract_image_count(usage: dict | None) -> int:
     return 0
 
 
+def _estimate_image_count_from_output(items: list[dict] | None) -> int:
+    """Heuristically count generated images from output items."""
+
+    if not items:
+        return 0
+
+    count = 0
+
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+
+        item_type = str(item.get("type", "")).lower()
+
+        # Direct image-bearing item types (tool returns, etc.)
+        if item_type and "image" in item_type and item_type != "input_image":
+            count += 1
+            continue
+
+        # Messages may embed image blocks
+        if item_type == "message":
+            content = item.get("content") or []
+            if isinstance(content, list):
+                for block in content:
+                    if not isinstance(block, dict):
+                        continue
+                    block_type = str(block.get("type", "")).lower()
+                    if block_type and "image" in block_type and block_type != "input_image":
+                        count += 1
+
+    return count
+
+
 def estimate_response_cost_usd(
     model: str, usage: dict | None, *, include_image_costs: bool = False
 ) -> float:
@@ -2829,8 +2878,9 @@ def format_cost_summary(
         _CONVERSATION_COSTS_USD[chat_id] = cumulative
 
     def _format_model_label() -> str:
-        pseudo = (pseudo_model or model or "").strip()
-        pseudo = pseudo.split(".")[-1] if pseudo else ""
+        display_pseudo = (pseudo_model or model or "").strip()
+        display_pseudo = display_pseudo.split(".")[-1] if display_pseudo else ""
+        pseudo_key = display_pseudo.lower()
         normalized_actual = _normalize_model_for_pricing(model)
         mapping = {
             "gpt-5-thinking-high": "gpt-5",
@@ -2845,9 +2895,34 @@ def format_cost_summary(
             "gpt-5-auto": normalized_actual,
         }
 
-        actual_label = mapping.get(pseudo, normalized_actual)
-        display_pseudo = pseudo or normalized_actual
-        return f"{display_pseudo} → {actual_label}"
+        reasoning_effort = {
+            "gpt-5-thinking-high": "high",
+            "gpt-5-thinking": "medium",
+            "gpt-5-thinking-minimal": "minimal",
+            "gpt-5-thinking-mini": "medium",
+            "gpt-5-thinking-mini-minimal": "minimal",
+            "gpt-5.1-thinking": None,
+            "gpt-5.1-thinking-none": "none",
+            "gpt-5.1-thinking-low": "low",
+            "gpt-5.1-thinking-medium": "medium",
+            "gpt-5.1-thinking-high": "high",
+            "gpt-5-pro": "high",
+        }.get(pseudo_key)
+
+        effort_label = ""
+        if reasoning_effort:
+            pretty = {
+                "minimal": "Minimal",
+                "low": "Low",
+                "medium": "Medium",
+                "high": "High",
+                "none": "No",
+            }.get(reasoning_effort, reasoning_effort)
+            effort_label = f" {pretty} reasoning"
+
+        actual_label = mapping.get(pseudo_key, normalized_actual)
+        display_name = display_pseudo or normalized_actual
+        return f"{display_name} → {actual_label}{effort_label}"
 
     label_model = _format_model_label()
     image_count = _extract_image_count(usage) if include_image_costs else 0
