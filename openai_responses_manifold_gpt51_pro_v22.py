@@ -622,6 +622,7 @@ class ResponsesBody(BaseModel):
             "response_format",  # Replaced with 'text' in Responses API
             "suffix",  # Responses API does not support suffix
             "stream_options",  # Responses API does not support stream options
+            "debug",  # UI debug toggle (not part of Responses API)
             "audio",  # Responses API does not support audio input
             "function_call",  # Deprecated in favor of 'tool_choice'.
             "functions",  # Deprecated in favor of 'tools'.
@@ -989,7 +990,7 @@ class Pipe:
 
         # If GPT-5-Auto, run through model router and update model.
         if openwebui_model_id.endswith(".gpt-5-auto"):
-            routed_model = await self._route_gpt5_auto(
+            routed_model, router_debug_tag = await self._route_gpt5_auto(
                 (
                     responses_body.input[-1].get("content", "")
                     if responses_body.input
@@ -1006,7 +1007,7 @@ class Pipe:
                 messages=[{"role": "user", "content": ""}],
             )
             responses_body.model = alias_body.model
-            pseudo_model_display = routed_model
+            pseudo_model_display = routed_model + router_debug_tag
 
             # If the alias set a reasoning_effort, fold it into the
             # ResponsesBody.reasoning dict without clobbering anything
@@ -2298,7 +2299,7 @@ class Pipe:
         self,
         last_user_message: str,
         valves: "Pipe.Valves",
-    ) -> str:
+    ) -> tuple[str, str]:
         """
         Router for the ``gpt-5-auto`` pseudo-model.
 
@@ -2334,7 +2335,7 @@ class Pipe:
 
         if not text:
             # No real content – stick to the cheapest reasonable default.
-            return "gpt-4.1-nano" + self._debug_tag(valves, "fallback")
+            return "gpt-4.1-nano", self._debug_tag(valves, "fallback")
 
         lower = text.lower()
         char_len = len(text)
@@ -2609,11 +2610,11 @@ class Pipe:
         # If the router gave us something valid, use it.
         if routed in allowed_targets:
         	# small-model router was used
-            return routed + self._debug_tag(valves, "router")
+            return routed, self._debug_tag(valves, "router")
 
         # Otherwise, fall back to your original heuristic logic.
         fallback_choice = heuristic_route()
-        return fallback_choice + self._debug_tag(valves, "fallback")
+        return fallback_choice, self._debug_tag(valves, "fallback")
 
 
     # 4.8 Internal Static Helpers
