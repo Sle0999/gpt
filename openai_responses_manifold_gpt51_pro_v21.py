@@ -2900,6 +2900,7 @@ def _infer_image_count_from_text_reply(text: str | None) -> int:
         "image was generated",
         "image was created",
         "image created",
+        "the image for",
         "the image of",
         "here is the image",
     ]
