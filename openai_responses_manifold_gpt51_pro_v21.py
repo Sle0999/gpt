@@ -1530,6 +1530,19 @@ class Pipe:
             # Optionally append a human-readable cost summary to the final
             # assistant message so it remains visible in the transcript instead
             # of flashing as a transient message.
+            # Heuristic: infer image generation even when Open WebUI hides the
+            # underlying image tool call (e.g. when it uses the legacy /images
+            # API and only forwards a textual status line such as
+            # "The image of a dog has been generated and is now being shown to you.").
+            if valves.SHOW_COSTS and valves.INCLUDE_IMAGE_COSTS and total_usage:
+                if _extract_image_count(total_usage) <= 0:
+                    inferred_images = _infer_image_count_from_text_reply(assistant_message)
+                    if inferred_images > 0:
+                        total_usage = dict(total_usage)
+                        total_usage["image_count_estimate"] = (
+                            total_usage.get("image_count_estimate", 0) + inferred_images
+                        )
+
             cost_line = self._build_cost_line_once(
                 valves,
                 total_usage if total_usage else None,
@@ -2827,40 +2840,37 @@ def _extract_image_count(usage: dict | None) -> int:
     return 0
 
 
-def _estimate_image_count_from_output(items: list[dict] | None) -> int:
-    """Heuristically count generated images from output items."""
+def _infer_image_count_from_text_reply(text: str | None) -> int:
+    """Heuristically infer that an image was generated from a plain text
+    assistant reply, even when the Responses output does not contain any
+    image-bearing items.
 
-    if not items:
+    This is specifically to handle cases where Open WebUI calls the legacy
+    /images API and only forwards a textual status message such as
+    "The image of a dog has been generated and is now being shown to you.".
+    """
+
+    if not text:
         return 0
 
-    count = 0
+    lower = str(text).lower()
 
-    for item in items:
-        if not isinstance(item, dict):
-            continue
+    trigger_phrases = [
+        "image has been generated",
+        "image has been created",
+        "image was generated",
+        "image was created",
+        "Image created",
+        "the image of",
+        "here is the image",
+    ]
 
-        item_type = str(item.get("type", "")).lower()
+    if any(phrase in lower for phrase in trigger_phrases):
+        # For now we assume a single generated image. This can be expanded
+        # later if Open WebUI starts including counts in its status text.
+        return 1
 
-        # Direct image-bearing item types (tool returns, etc.)
-        if item_type and "image" in item_type and item_type != "input_image":
-            count += 1
-            continue
-
-        # Messages may embed image blocks
-        if item_type == "message":
-            content = item.get("content") or []
-            if isinstance(content, list):
-                for block in content:
-                    if not isinstance(block, dict):
-                        continue
-                    block_type = str(block.get("type", "")).lower()
-                    if block_type and "image" in block_type and block_type != "input_image":
-                        count += 1
-
-    return count
-
-
-def _is_image_model(name: str | None) -> bool:
+    return 0
     """Return True when the supplied model name represents image generation."""
 
     if not name:
@@ -3067,7 +3077,9 @@ def format_cost_summary(
         image_line += "]"
         lines.append(image_line)
 
-    if image_count:
+    if include_image_costs and image_count:
+        # Only show a standalone total line when we are actually including
+        # image costs. For pure text replies the total remains inline.
         lines.append(f"[approx total: ${cumulative:.6f}]")
 
     cost_block = "\n".join(lines)
