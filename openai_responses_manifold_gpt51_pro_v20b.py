@@ -2879,8 +2879,8 @@ def format_cost_summary(
 
     def _format_model_label() -> str:
         display_pseudo = (pseudo_model or model or "").strip()
-        display_pseudo = display_pseudo.split(".")[-1] if display_pseudo else ""
-        pseudo_key = display_pseudo.lower()
+        pseudo_key_source = display_pseudo.rsplit(".", 1)[-1] if display_pseudo else ""
+        pseudo_key = pseudo_key_source.lower()
         normalized_actual = _normalize_model_for_pricing(model)
         mapping = {
             "gpt-5-thinking-high": "gpt-5",
