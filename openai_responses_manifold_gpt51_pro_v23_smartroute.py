@@ -976,9 +976,9 @@ class Pipe:
         )
 
         pseudo_model_display = (
-            (openwebui_model_id.split(".")[-1])
+            (openwebui_model_id.split(".", 1)[-1])
             if openwebui_model_id
-            else (requested_model_raw.split(".")[-1] if requested_model_raw else "")
+            else (requested_model_raw.split(".", 1)[-1] if requested_model_raw else "")
         )
 
         # Detect if task model (generate title, generate tags, etc.), handle it separately
