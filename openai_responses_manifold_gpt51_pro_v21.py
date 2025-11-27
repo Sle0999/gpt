@@ -2828,6 +2828,16 @@ def _estimate_image_count_from_output(items: list[dict] | None) -> int:
     return count
 
 
+def _is_image_model(name: str | None) -> bool:
+    """Return True when the supplied model name represents image generation."""
+
+    if not name:
+        return False
+
+    normalized = name.lower()
+    return "gpt-image" in normalized
+
+
 def estimate_response_cost_usd(
     model: str, usage: dict | None, *, include_image_costs: bool = False
 ) -> float:
@@ -2887,6 +2897,12 @@ def format_cost_summary(
     """
     text_cost = estimate_response_cost_usd(model, usage, include_image_costs=False)
     image_count = _extract_image_count(usage) if include_image_costs else 0
+    if include_image_costs and image_count <= 0:
+        # Fall back to assuming one generated image when using an image model and
+        # the provider omitted usage metadata.
+        if _is_image_model(model) or _is_image_model(pseudo_model):
+            image_count = 1
+
     image_cost = 0.04 * image_count if image_count else 0.0
     cost_this = text_cost + image_cost
     if cost_this <= 0:
@@ -2966,7 +2982,7 @@ def format_cost_summary(
         image_line += "]"
         lines.append(image_line)
 
-    if chat_id or image_count:
+    if image_count:
         lines.append(f"[approx total: ${cumulative:.6f}]")
 
     cost_block = "\n".join(lines)
