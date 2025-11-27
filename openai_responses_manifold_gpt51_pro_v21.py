@@ -1444,6 +1444,14 @@ class Pipe:
                 image_count_estimate = _estimate_image_count_from_output(
                     final_response.get("output")
                 )
+                if not image_count_estimate:
+                    generated_calls = [
+                        item
+                        for item in final_response.get("output") or []
+                        if item.get("type") == "image_generation_call"
+                    ]
+                    if generated_calls:
+                        image_count_estimate = len(generated_calls)
                 if image_count_estimate:
                     usage["image_count_estimate"] = usage.get(
                         "image_count_estimate", 0
@@ -1728,6 +1736,12 @@ class Pipe:
                 usage = dict(response.get("usage") or {})
 
                 image_count_estimate = _estimate_image_count_from_output(items)
+                if not image_count_estimate:
+                    generated_calls = [
+                        item for item in items if item.get("type") == "image_generation_call"
+                    ]
+                    if generated_calls:
+                        image_count_estimate = len(generated_calls)
                 if image_count_estimate:
                     usage["image_count_estimate"] = usage.get(
                         "image_count_estimate", 0
