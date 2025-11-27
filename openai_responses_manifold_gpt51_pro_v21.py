@@ -2201,12 +2201,19 @@ class Pipe:
         ):
             include_image_costs = True
 
+        image_model_override = None
+        if usage:
+            usage_model = usage.get("model")
+            if _is_image_model(usage_model):
+                image_model_override = usage_model
+
         cost_line, _, _ = format_cost_summary(
             model,
             usage,
             chat_id=chat_id,
             include_image_costs=include_image_costs,
             pseudo_model=pseudo_model,
+            image_model_override=image_model_override,
         )
 
         return cost_line
@@ -2850,11 +2857,20 @@ def _is_image_model(name: str | None) -> bool:
 
 
 def _estimate_image_cost(
-    model: str | None, pseudo_model: str | None, image_count: int
+    model: str | None,
+    pseudo_model: str | None,
+    image_count: int,
+    *,
+    image_model_override: str | None = None,
 ) -> tuple[float, str, str]:
     """Return (cost, model_label, size_label) for image generations."""
 
-    resolved_model = (pseudo_model or model or "gpt-image-1").strip() or "gpt-image-1"
+    resolved_model = (
+        image_model_override or pseudo_model or model or "gpt-image-1"
+    ).strip() or "gpt-image-1"
+    if not _is_image_model(resolved_model):
+        resolved_model = "gpt-image-1"
+
     normalized_model = resolved_model.split(".")[-1].lower()
     size_label = "1024x1024"
 
@@ -2882,7 +2898,9 @@ def estimate_response_cost_usd(
     """
     if not usage:
         if include_image_costs and _is_image_model(model):
-            image_cost, _, _ = _estimate_image_cost(model, None, 1)
+            image_cost, _, _ = _estimate_image_cost(
+                model, None, 1, image_model_override=model
+            )
             return float(image_cost)
         return 0.0
 
@@ -2912,7 +2930,12 @@ def estimate_response_cost_usd(
             image_count = 1
 
         if image_count:
-            image_cost, _, _ = _estimate_image_cost(model, usage_model, image_count)
+            image_cost, _, _ = _estimate_image_cost(
+                model,
+                usage_model,
+                image_count,
+                image_model_override=usage_model,
+            )
             cost += image_cost
 
     return float(cost)
@@ -2925,6 +2948,7 @@ def format_cost_summary(
     chat_id: str | None,
     include_image_costs: bool = False,
     pseudo_model: str | None = None,
+    image_model_override: str | None = None,
 ) -> tuple[str, float, float]:
     """
     Build a human-readable cost summary line and update the running total.
@@ -2945,7 +2969,10 @@ def format_cost_summary(
     image_size_label = ""
     if image_count:
         image_cost, image_model_label, image_size_label = _estimate_image_cost(
-            model, pseudo_model, image_count
+            model,
+            pseudo_model,
+            image_count,
+            image_model_override=image_model_override,
         )
     cost_this = text_cost + image_cost
     if cost_this <= 0:
