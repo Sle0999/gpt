@@ -3148,7 +3148,7 @@ def _is_image_model(name: str | None) -> bool:
         return False
 
     normalized = name.lower()
-    return "gpt-image" in normalized
+    return "gpt-image" in normalized or "image_prompt_generation" in normalized
 
 
 def _estimate_image_cost(
