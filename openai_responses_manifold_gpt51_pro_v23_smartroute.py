@@ -751,7 +751,6 @@ class Pipe:
             ),
         )
 
-
         GPT5_AUTO_ROUTER_MODEL: str = Field(
             default="gpt-4.1-nano",
             description=(
@@ -1483,13 +1482,14 @@ class Pipe:
                 if not image_count_estimate and generation_call_count:
                     image_count_estimate = generation_call_count
                 if generation_call_count:
-                    usage["image_generation_call_count"] = usage.get(
-                        "image_generation_call_count", 0
-                    ) + generation_call_count
+                    usage["image_generation_call_count"] = (
+                        usage.get("image_generation_call_count", 0)
+                        + generation_call_count
+                    )
                 if image_count_estimate:
-                    usage["image_count_estimate"] = usage.get(
-                        "image_count_estimate", 0
-                    ) + image_count_estimate
+                    usage["image_count_estimate"] = (
+                        usage.get("image_count_estimate", 0) + image_count_estimate
+                    )
 
                 if usage:
                     usage["turn_count"] = 1
@@ -1570,7 +1570,9 @@ class Pipe:
             # "The image of a dog has been generated and is now being shown to you.").
             if valves.SHOW_COSTS and valves.INCLUDE_IMAGE_COSTS and total_usage:
                 if _extract_image_count(total_usage) <= 0:
-                    inferred_images = _infer_image_count_from_text_reply(assistant_message)
+                    inferred_images = _infer_image_count_from_text_reply(
+                        assistant_message
+                    )
                     if inferred_images > 0:
                         total_usage = dict(total_usage)
                         total_usage["image_count_estimate"] = (
@@ -1604,8 +1606,8 @@ class Pipe:
                             {
                                 "type": "chat:message",
                                 "data": {"content": assistant_message},
-                                }
-                            )
+                            }
+                        )
                 else:
                     # Notification mode: do NOT modify the assistant text.
                     # Instead, surface the approximate cost as a toast-style
@@ -1788,13 +1790,14 @@ class Pipe:
                 if not image_count_estimate and generation_call_count:
                     image_count_estimate = generation_call_count
                 if generation_call_count:
-                    usage["image_generation_call_count"] = usage.get(
-                        "image_generation_call_count", 0
-                    ) + generation_call_count
+                    usage["image_generation_call_count"] = (
+                        usage.get("image_generation_call_count", 0)
+                        + generation_call_count
+                    )
                 if image_count_estimate:
-                    usage["image_count_estimate"] = usage.get(
-                        "image_count_estimate", 0
-                    ) + image_count_estimate
+                    usage["image_count_estimate"] = (
+                        usage.get("image_count_estimate", 0) + image_count_estimate
+                    )
 
                 if usage:
                     usage["turn_count"] = 1
@@ -2327,7 +2330,6 @@ class Pipe:
 
         return f"{cleaned}\n\n{cost_line}"
 
-
     def _debug_tag(self, valves: "Pipe.Valves", tag: str) -> str:
         """Return a debug suffix if GPT5_AUTO_ROUTER_DEBUG is enabled."""
         try:
@@ -2651,13 +2653,12 @@ class Pipe:
 
         # If the router gave us something valid, use it.
         if routed in allowed_targets:
-        	# small-model router was used
+            # small-model router was used
             return routed, self._debug_tag(valves, "router")
 
         # Otherwise, fall back to your original heuristic logic.
         fallback_choice = heuristic_route()
         return fallback_choice, self._debug_tag(valves, "fallback")
-
 
     # 4.8 Internal Static Helpers
 
@@ -2749,7 +2750,7 @@ class ExpandableStatusIndicator:
         # Fallback to original heuristic logic if router misbehaves.
         fallback_choice = heuristic_route()
         return fallback_choice + self._debug_tag(valves, "fallback")
-        
+
     status = ExpandableStatusIndicator(event_emitter=__event_emitter__)
 
     assistant_message = await status.add(
@@ -3058,7 +3059,9 @@ def _count_image_generation_calls(items: list[dict] | None) -> int:
     if not items:
         return 0
 
-    return sum(1 for item in items if (item or {}).get("type") == "image_generation_call")
+    return sum(
+        1 for item in items if (item or {}).get("type") == "image_generation_call"
+    )
 
 
 def _estimate_image_count_from_output(items: list[dict] | None) -> int:
@@ -3163,9 +3166,9 @@ def _estimate_image_cost(
     size_label = "1024x1024"
 
     # Look up pricing with a conservative default when unknown.
-    pricing = IMAGE_MODEL_PRICING_USD.get(normalized_model) or IMAGE_MODEL_PRICING_USD.get(
-        "gpt-image-1"
-    )
+    pricing = IMAGE_MODEL_PRICING_USD.get(
+        normalized_model
+    ) or IMAGE_MODEL_PRICING_USD.get("gpt-image-1")
     per_image_cost = pricing.get(size_label, 0.04) if pricing else 0.04
 
     return per_image_cost * image_count, resolved_model, size_label
