@@ -220,6 +220,9 @@ DETAILS_RE = re.compile(
 # [approx cost this reply (...): $X]
 # [approx cost 1 image (gpt-image-1): $Y | approx total: $Z]
 # [approx total: $Z]
+MALFORMED_COST_LINE_RE = re.compile(
+    r"(?im)^(?!\s*\[)\s*[^\n]*approx\s+(?:cost|total)[^\n]*$"
+)
 COST_LINE_RE = re.compile(r"\[approx (?:cost|total)[^\]]*\]", re.I)
 
 
@@ -2313,7 +2316,12 @@ class Pipe:
         if not cost_line:
             return text
 
-        cleaned = COST_LINE_RE.sub("", text).strip()
+        cleaned = COST_LINE_RE.sub("", text)
+
+        # If a previous cost line was truncated (e.g., missing the leading
+        # "["), strip it as well so a fresh, well-formed summary can replace
+        # it without stacking malformed duplicates.
+        cleaned = MALFORMED_COST_LINE_RE.sub("", cleaned).strip()
         if not cleaned:
             return cost_line
 
