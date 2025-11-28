@@ -3129,6 +3129,8 @@ def _infer_image_count_from_text_reply(text: str | None) -> int:
         "here is the image",
         "I’ll create an image",
         "The updated image",
+        "The image has been updated",
+        "The image has been enhanced",
     ]
 
     if any(phrase in lower for phrase in trigger_phrases):
