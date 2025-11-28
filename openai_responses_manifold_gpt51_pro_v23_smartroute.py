@@ -1472,13 +1472,10 @@ class Pipe:
 
                 # Extract usage information from OpenAI response and pass-through to Open WebUI
                 usage = dict(final_response.get("usage") or {})
+                items = final_response.get("output", [])
 
-                image_count_estimate = _estimate_image_count_from_output(
-                    final_response.get("output")
-                )
-                generation_call_count = _count_image_generation_calls(
-                    final_response.get("output")
-                )
+                image_count_estimate = _estimate_image_count_from_output(items)
+                generation_call_count = _count_image_generation_calls(items)
                 if not image_count_estimate and generation_call_count:
                     image_count_estimate = generation_call_count
                 if generation_call_count:
@@ -1494,9 +1491,7 @@ class Pipe:
                 if usage:
                     usage["turn_count"] = 1
                     usage["function_call_count"] = sum(
-                        1
-                        for i in final_response["output"]
-                        if i["type"] == "function_call"
+                        1 for i in items if i.get("type") == "function_call"
                     )
                     total_usage = merge_usage_stats(total_usage, usage)
                     await self._emit_completion(
@@ -1845,6 +1840,16 @@ class Pipe:
             # If enabled, append an approximate cost summary to the end of the
             # returned text.  Non‑streaming calls do not emit additional
             # ``chat:message`` events, so we modify the text directly.
+            if valves.SHOW_COSTS and valves.INCLUDE_IMAGE_COSTS and total_usage:
+                if _extract_image_count(total_usage) <= 0:
+                    inferred_images = _infer_image_count_from_text_reply(final_text)
+                    if inferred_images > 0:
+                        total_usage = dict(total_usage)
+                        total_usage["image_count_estimate"] = (
+                            total_usage.get("image_count_estimate", 0)
+                            + inferred_images
+                        )
+
             cost_line = self._build_cost_line_once(
                 valves,
                 total_usage if total_usage else None,
@@ -2261,28 +2266,108 @@ class Pipe:
         if not valves.SHOW_COSTS:
             return ""
 
-        include_image_costs = valves.INCLUDE_IMAGE_COSTS or bool(
-            _extract_image_count(usage)
-        )
-        if not include_image_costs and (
-            _is_image_model(model) or _is_image_model(pseudo_model)
-        ):
-            include_image_costs = True
+        text_cost = estimate_response_cost_usd(model, usage, include_image_costs=False)
 
-        image_model_override = None
-        if usage:
-            usage_model = usage.get("model")
-            if _is_image_model(usage_model):
-                image_model_override = usage_model
-
-        cost_line, _, _ = format_cost_summary(
-            model,
-            usage,
-            chat_id=chat_id,
-            include_image_costs=include_image_costs,
-            pseudo_model=pseudo_model,
-            image_model_override=image_model_override,
+        image_count = _extract_image_count(usage)
+        per_image = IMAGE_MODEL_PRICING_USD.get("gpt-image-1", {}).get(
+            "1024x1024"
         )
+        if per_image is None:
+            per_image = IMAGE_ESTIMATED_COST_PER_IMAGE_USD
+
+        image_cost = 0.0
+        if valves.INCLUDE_IMAGE_COSTS and image_count > 0:
+            image_cost = image_count * float(per_image)
+
+        cost_this_reply = text_cost + image_cost
+        if cost_this_reply <= 0:
+            return ""
+
+        cumulative_cost = cost_this_reply
+        if chat_id:
+            cumulative_cost += _CONVERSATION_COSTS_USD.get(chat_id, 0.0)
+            _CONVERSATION_COSTS_USD[chat_id] = cumulative_cost
+
+        def _format_model_label() -> str:
+            display_pseudo = (pseudo_model or model or "").strip()
+
+            def _normalize_display_to_key(raw: str) -> str:
+                """Strip router/debug adornments and provider prefixes for lookups."""
+
+                without_debug = raw.split("[", 1)[0].strip()
+                provider_stripped = without_debug.split("/", 1)[-1].strip()
+                return provider_stripped
+
+            pseudo_key_source = (
+                _normalize_display_to_key(display_pseudo).rsplit(".", 1)[-1]
+                if display_pseudo
+                else ""
+            )
+            pseudo_key = pseudo_key_source.lower()
+            normalized_actual = _normalize_model_for_pricing(model)
+            mapping = {
+                "gpt-5-thinking-high": "gpt-5",
+                "gpt-5-thinking": "gpt-5",
+                "gpt-5-thinking-minimal": "gpt-5",
+                "gpt-5-thinking-mini": "gpt-5-mini",
+                "gpt-5-thinking-mini-minimal": "gpt-5-mini",
+                "gpt-5-pro": "gpt-5-pro",
+                "gpt-5.1": "gpt-5.1",
+                "gpt-4.1-mini": "gpt-4.1-mini",
+                "gpt-4.1-nano": "gpt-4.1-nano",
+                "gpt-5-auto": normalized_actual,
+            }
+
+            reasoning_effort = {
+                "gpt-5-thinking-high": "high",
+                "gpt-5-thinking": "medium",
+                "gpt-5-thinking-minimal": "minimal",
+                "gpt-5-thinking-mini": "medium",
+                "gpt-5-thinking-mini-minimal": "minimal",
+                "gpt-5.1-thinking": None,
+                "gpt-5.1-thinking-none": "none",
+                "gpt-5.1-thinking-low": "low",
+                "gpt-5.1-thinking-medium": "medium",
+                "gpt-5.1-thinking-high": "high",
+                "gpt-5-pro": "high",
+            }.get(pseudo_key)
+
+            effort_label = ""
+            if reasoning_effort:
+                pretty = {
+                    "minimal": "Minimal",
+                    "low": "Low",
+                    "medium": "Medium",
+                    "high": "High",
+                    "none": "No",
+                }.get(reasoning_effort, reasoning_effort)
+                effort_label = f" {pretty} reasoning"
+
+            actual_label = mapping.get(pseudo_key, normalized_actual)
+            display_name = display_pseudo or normalized_actual
+            return f"{display_name} → {actual_label}{effort_label}"
+
+        label_model = _format_model_label()
+
+        cost_lines: list[str] = []
+
+        text_line = f"[approx cost this reply ({label_model}): ${text_cost:.6f}"
+        if image_cost <= 0 and chat_id:
+            text_line += f" | approx total for this chat: ${cumulative_cost:.6f}"
+        text_line += "]"
+
+        if text_cost > 0 or image_cost <= 0:
+            cost_lines.append(text_line)
+
+        if image_cost > 0:
+            plural = "image" if image_count == 1 else "images"
+            image_line = (
+                f"[approx cost {image_count} {plural} (gpt-image-1): ${image_cost:.6f}"
+            )
+            image_line += f" | approx total for this chat: ${cumulative_cost:.6f}]" if chat_id else "]"
+            cost_lines.append(image_line)
+
+        cost_line = "\n".join(cost_lines)
 
         # If we already emitted the exact same cost line for this chat in this
         # process lifetime (e.g., due to retries or multiple formatting passes),
@@ -3059,9 +3144,7 @@ def _count_image_generation_calls(items: list[dict] | None) -> int:
     if not items:
         return 0
 
-    return sum(
-        1 for item in items if (item or {}).get("type") == "image_generation_call"
-    )
+    return sum(1 for item in items if (item or {}).get("type") == "image_generation_call")
 
 
 def _estimate_image_count_from_output(items: list[dict] | None) -> int:
@@ -3075,29 +3158,13 @@ def _estimate_image_count_from_output(items: list[dict] | None) -> int:
         if not isinstance(item, dict):
             continue
 
-        item_type = (item.get("type") or "").lower()
-        if item_type in {
-            "output_image",
-            "image",
-            "image_url",
-            "image_file",
-            "image_base64",
-        }:
+        item_type = item.get("type")
+        if item_type == "image":
             count += 1
-            continue
 
         if item_type == "message":
-            for block in item.get("content") or []:
-                if not isinstance(block, dict):
-                    continue
-                block_type = (block.get("type") or "").lower()
-                if block_type in {
-                    "output_image",
-                    "image",
-                    "image_url",
-                    "image_file",
-                    "image_base64",
-                }:
+            for block in item.get("content", []):
+                if isinstance(block, dict) and block.get("type") == "image":
                     count += 1
 
     return count
@@ -3116,26 +3183,25 @@ def _infer_image_count_from_text_reply(text: str | None) -> int:
     if not text:
         return 0
 
-    lower = str(text).lower()
-
-    trigger_phrases = [
-        "image has been generated",
-        "image has been created",
-        "image was generated",
-        "image was created",
-        "image created",
-        "the image for",
-        "the image of",
-        "here is the image",
-        "I’ll create an image",
-        "The updated image",
-        "The image has been updated",
-        "The image has been enhanced",
+    patterns = [
+        r"\bimage\s+created\b",
+        r"\bcreating\s+image\b",
+        r"\bimage\s+has\s+been\s+generated\b",
+        r"\bimage\s+has\s+been\s+created\b",
+        r"\bimage\s+was\s+generated\b",
+        r"\bimage\s+was\s+created\b",
+        r"\bhere\s+is\s+the\s+image\b",
+        r"\bthe\s+image\s+has\s+been\s+generated\b",
+        r"\bthe\s+image\s+has\s+been\s+created\b",
     ]
 
-    if any(phrase in lower for phrase in trigger_phrases):
-        # For now we assume a single generated image. This can be expanded
-        # later if Open WebUI starts including counts in its status text.
+    lower_text = str(text).lower()
+    for pattern in patterns:
+        if re.search(pattern, lower_text, re.IGNORECASE):
+            return 1
+
+    # Emoji or informal hints that often accompany hidden image generations.
+    if any(hint in lower_text for hint in ["🎨", "🖼"]):
         return 1
 
     return 0
