@@ -88,8 +88,12 @@ _CONVERSATION_COSTS_USD: dict[str, float] = {}
 # is retried or cost formatting runs multiple times for the same reply.  We
 # key by chat_id when available, but also fall back to a global bucket to avoid
 # duplicate cost lines when Open WebUI omits chat_id in the metadata (common in
-# certain continued-chat flows).
+# certain continued-chat flows).  For stricter deduplication within a single
+# reply, we also track message_id so the same assistant message never ends up
+# with multiple cost summaries, even if it is reformatted several times during
+# delivery.
 _LAST_COST_LINE_BY_CHAT: dict[str, str] = {}
+_LAST_COST_LINE_BY_MESSAGE: dict[str, str] = {}
 
 
 # Third-party imports
@@ -1575,6 +1579,7 @@ class Pipe:
                 total_usage if total_usage else None,
                 model=body.model,
                 chat_id=metadata.get("chat_id"),
+                message_id=metadata.get("message_id"),
                 pseudo_model=(
                     metadata.get("pseudo_model_display")
                     or (
@@ -1839,6 +1844,7 @@ class Pipe:
                 total_usage if total_usage else None,
                 model=body.model,
                 chat_id=metadata.get("chat_id"),
+                message_id=metadata.get("message_id"),
                 pseudo_model=(
                     metadata.get("pseudo_model_display")
                     or (
@@ -2241,6 +2247,7 @@ class Pipe:
         *,
         model: str,
         chat_id: str | None,
+        message_id: str | None,
         pseudo_model: str | None,
     ) -> str:
         """Return a formatted cost line if the SHOW_COSTS valve is enabled."""
@@ -2281,6 +2288,16 @@ class Pipe:
         if last_cost_line and last_cost_line == cost_line:
             return ""
         _LAST_COST_LINE_BY_CHAT[cache_key] = cost_line
+
+        # Additionally, prevent multiple cost summaries from being appended to
+        # the same assistant reply when Open WebUI replays or reformats the
+        # message text (e.g., continued-chat flows that reuse the same
+        # message_id). If we have already produced a cost line for this
+        # message_id, skip emitting another one entirely.
+        if message_id:
+            if _LAST_COST_LINE_BY_MESSAGE.get(message_id):
+                return ""
+            _LAST_COST_LINE_BY_MESSAGE[message_id] = cost_line
 
         return cost_line
 
