@@ -84,8 +84,11 @@ IMAGE_ESTIMATED_COST_PER_IMAGE_USD = 0.04
 # `chat_id` when available.  It is purely best‑effort and only lives for the
 # lifetime of this Python process.
 _CONVERSATION_COSTS_USD: dict[str, float] = {}
-# Tracks the last emitted cost line per chat so we can suppress duplicates when
-# a turn is retried or cost formatting runs multiple times for the same reply.
+# Tracks the last emitted cost line so we can suppress duplicates when a turn
+# is retried or cost formatting runs multiple times for the same reply.  We
+# key by chat_id when available, but also fall back to a global bucket to avoid
+# duplicate cost lines when Open WebUI omits chat_id in the metadata (common in
+# certain continued-chat flows).
 _LAST_COST_LINE_BY_CHAT: dict[str, str] = {}
 
 
@@ -2270,12 +2273,14 @@ class Pipe:
 
         # If we already emitted the exact same cost line for this chat in this
         # process lifetime (e.g., due to retries or multiple formatting passes),
-        # do not emit it again to avoid cluttering the transcript.
-        if chat_id:
-            last_cost_line = _LAST_COST_LINE_BY_CHAT.get(chat_id)
-            if last_cost_line and last_cost_line == cost_line:
-                return ""
-            _LAST_COST_LINE_BY_CHAT[chat_id] = cost_line
+        # do not emit it again to avoid cluttering the transcript.  When
+        # chat_id is missing, fall back to a global bucket so continued-chat
+        # flows without chat_id still suppress duplicates.
+        cache_key = chat_id or "__global__"
+        last_cost_line = _LAST_COST_LINE_BY_CHAT.get(cache_key)
+        if last_cost_line and last_cost_line == cost_line:
+            return ""
+        _LAST_COST_LINE_BY_CHAT[cache_key] = cost_line
 
         return cost_line
 
