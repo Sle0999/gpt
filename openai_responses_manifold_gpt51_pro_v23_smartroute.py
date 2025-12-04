@@ -531,32 +531,39 @@ class ResponsesBody(BaseModel):
 
                 # Only transform known types; leave all others unchanged
                 def _transform_input_audio(block: dict[str, Any]) -> dict[str, Any] | None:
+                    raw_payload = block.get("input_audio")
                     payload = (
-                        block.get("input_audio")
-                        if isinstance(block.get("input_audio"), dict)
-                        else None
-                    ) or {}
+                        raw_payload
+                        if isinstance(raw_payload, dict)
+                        else ({"data": raw_payload} if isinstance(raw_payload, str) else {})
+                    )
 
-                    if not payload:
-                        inferred_format = (
-                            block.get("format")
-                            or (block.get("mime_type", "").split("/")[-1] or None)
-                            or (
-                                Path(block.get("filename", "")).suffix.lstrip(".").lower()
-                                if block.get("filename")
-                                else None
-                            )
+                    inferred_format = (
+                        block.get("format")
+                        or payload.get("format")
+                        or (block.get("mime_type", "").split("/")[-1] or None)
+                        or (
+                            Path(block.get("filename", "")).suffix.lstrip(".").lower()
+                            if block.get("filename")
+                            else None
                         )
+                    )
 
+                    # Merge in common top-level fields when the nested payload is empty
+                    if not payload:
                         payload = {
                             k: v
                             for k, v in {
                                 "file_id": block.get("file_id"),
                                 "data": block.get("data"),
-                                "format": inferred_format,
                             }.items()
                             if v
                         }
+
+                    if inferred_format and payload.get("data") and not payload.get("format"):
+                        payload["format"] = inferred_format
+                    elif inferred_format and not payload:
+                        payload = {"format": inferred_format}
 
                     if not payload:
                         logging.warning("Skipping input_audio block with no usable payload")
