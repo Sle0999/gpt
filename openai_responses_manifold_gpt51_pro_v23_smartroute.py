@@ -14,6 +14,7 @@ from __future__ import annotations
 # Standard library, third-party, and Open WebUI imports
 # Standard library imports
 import textwrap
+from pathlib import Path
 from typing import Tuple
 import asyncio
 import datetime
@@ -529,6 +530,40 @@ class ResponsesBody(BaseModel):
                     content_blocks = [{"type": "text", "text": content_blocks}]
 
                 # Only transform known types; leave all others unchanged
+                def _transform_input_audio(block: dict[str, Any]) -> dict[str, Any] | None:
+                    payload = (
+                        block.get("input_audio")
+                        if isinstance(block.get("input_audio"), dict)
+                        else None
+                    ) or {}
+
+                    if not payload:
+                        inferred_format = (
+                            block.get("format")
+                            or (block.get("mime_type", "").split("/")[-1] or None)
+                            or (
+                                Path(block.get("filename", "")).suffix.lstrip(".").lower()
+                                if block.get("filename")
+                                else None
+                            )
+                        )
+
+                        payload = {
+                            k: v
+                            for k, v in {
+                                "file_id": block.get("file_id"),
+                                "data": block.get("data"),
+                                "format": inferred_format,
+                            }.items()
+                            if v
+                        }
+
+                    if not payload:
+                        logging.warning("Skipping input_audio block with no usable payload")
+                        return None
+
+                    return {"type": "input_audio", "input_audio": payload}
+
                 block_transform = {
                     "text": lambda b: {"type": "input_text", "text": b.get("text", "")},
                     "image_url": lambda b: {
@@ -539,15 +574,21 @@ class ResponsesBody(BaseModel):
                         "type": "input_file",
                         "file_id": b.get("file_id"),
                     },
+                    "input_audio": _transform_input_audio,
                 }
 
                 openai_input.append(
                     {
                         "role": "user",
                         "content": [
-                            block_transform.get(block.get("type"), lambda b: b)(block)
+                            transformed
                             for block in content_blocks
                             if block
+                            and (
+                                transformed := block_transform.get(
+                                    block.get("type"), lambda b: b
+                                )(block)
+                            )
                         ],
                     }
                 )
@@ -636,7 +677,6 @@ class ResponsesBody(BaseModel):
             "suffix",  # Responses API does not support suffix
             "stream_options",  # Responses API does not support stream options
             "debug",  # UI debug toggle (not part of Responses API)
-            "audio",  # Responses API does not support audio input
             "function_call",  # Deprecated in favor of 'tool_choice'.
             "functions",  # Deprecated in favor of 'tools'.
             # Fields that are dropped and manually handled in step 2.
@@ -735,7 +775,7 @@ class Pipe:
 
         # 2) Models
         MODEL_ID: str = Field(
-            default="gpt-5-auto, gpt-5.1, gpt-5-pro, gpt-5-chat-latest, gpt-5-thinking, gpt-5-thinking-high, gpt-5-thinking-minimal, gpt-4.1-nano, chatgpt-4o-latest, o3, gpt-4o",
+            default="gpt-5-auto, gpt-5.1, gpt-5-pro, gpt-5-chat-latest, gpt-5-thinking, gpt-5-thinking-high, gpt-5-thinking-minimal, gpt-4.1-nano, chatgpt-4o-latest, o3, gpt-4o, gpt-4o-transcribe-diarize",
             description=(
                 "Comma separated OpenAI model IDs. Each ID becomes a model entry in WebUI. "
                 "Supports all official OpenAI model IDs and pseudo IDs: "
