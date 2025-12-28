@@ -49,15 +49,18 @@ from urllib.parse import urlparse
 # They may drift over time as OpenAI adjusts pricing.
 MODEL_PRICING_USD_PER_MTOK = {
     # GPT‑5 family (standard API pricing)
+    "gpt-5.2": {"input": 1.25, "output": 10.00},
     "gpt-5.1": {"input": 1.25, "output": 10.00},
     "gpt-5": {"input": 1.25, "output": 10.00},
     "gpt-5-chat-latest": {"input": 1.25, "output": 10.00},
+    "gpt-5.2-chat-latest": {"input": 1.25, "output": 10.00},
     "gpt-5.1-chat-latest": {"input": 1.25, "output": 10.00},
     # Reasoning / thinking variants are billed like the base GPT‑5 family
     "gpt-5-thinking": {"input": 1.25, "output": 10.00},
     "gpt-5-thinking-high": {"input": 1.25, "output": 10.00},
     "gpt-5-thinking-minimal": {"input": 1.25, "output": 10.00},
     # Pro tier – significantly more expensive
+    "gpt-5.2-pro": {"input": 15.00, "output": 120.00},
     "gpt-5-pro": {"input": 15.00, "output": 120.00},
     # GPT‑4.1 / 4o family (legacy but still common in WebUI configs)
     # Values are based on the current public table and may differ slightly
@@ -112,9 +115,11 @@ from open_webui.models.models import ModelForm, Models
 FEATURE_SUPPORT = {
     "web_search_tool": {
         "gpt-5",
+        "gpt-5.2",
         "gpt-5.1",
         "gpt-5.1-mini",
         "gpt-5.1-nano",
+        "gpt-5.2-pro",
         "gpt-5-pro",
         "gpt-5-mini",
         "gpt-4.1",
@@ -129,9 +134,11 @@ FEATURE_SUPPORT = {
     },  # OpenAI's built-in web search tool.
     "image_gen_tool": {
         "gpt-5",
+        "gpt-5.2",
         "gpt-5.1",
         "gpt-5.1-mini",
         "gpt-5.1-nano",
+        "gpt-5.2-pro",
         "gpt-5-pro",
         "gpt-5-mini",
         "gpt-5-nano",
@@ -144,9 +151,11 @@ FEATURE_SUPPORT = {
     },  # OpenAI's built-in image generation tool.
     "function_calling": {
         "gpt-5",
+        "gpt-5.2",
         "gpt-5.1",
         "gpt-5.1-mini",
         "gpt-5.1-nano",
+        "gpt-5.2-pro",
         "gpt-5-pro",
         "gpt-5-mini",
         "gpt-5-nano",
@@ -164,9 +173,11 @@ FEATURE_SUPPORT = {
     },  # OpenAI's native function calling support.
     "reasoning": {
         "gpt-5",
+        "gpt-5.2",
         "gpt-5.1",
         "gpt-5.1-mini",
         "gpt-5.1-nano",
+        "gpt-5.2-pro",
         "gpt-5-pro",
         "gpt-5-mini",
         "gpt-5-nano",
@@ -179,9 +190,11 @@ FEATURE_SUPPORT = {
     },  # OpenAI's reasoning models.
     "reasoning_summary": {
         "gpt-5",
+        "gpt-5.2",
         "gpt-5.1",
         "gpt-5.1-mini",
         "gpt-5.1-nano",
+        "gpt-5.2-pro",
         "gpt-5-pro",
         "gpt-5-mini",
         "gpt-5-nano",
@@ -196,9 +209,11 @@ FEATURE_SUPPORT = {
     },  # OpenAI's reasoning summary feature.  May require OpenAI org verification before use.
     "verbosity": {
         "gpt-5",
+        "gpt-5.2",
         "gpt-5.1",
         "gpt-5.1-mini",
         "gpt-5.1-nano",
+        "gpt-5.2-pro",
         "gpt-5-pro",
         "gpt-5-mini",
         "gpt-5-nano",
@@ -272,8 +287,9 @@ class CompletionsBody(BaseModel):
             "gpt-5-pro": ("gpt-5-pro", "high"),
             "gpt-5-pro-high": ("gpt-5-pro", "high"),
             # Placeholder router
-            "gpt-5-auto": ("gpt-5.1", None),
+            "gpt-5-auto": ("gpt-5.2", None),
             # Additional pseudo → real mappings
+            "gpt-5.2": ("gpt-5.2", None),
             "gpt-5.1": ("gpt-5.1", None),
             "gpt-4.1-nano": ("gpt-4.1-nano", None),
             "gpt-4.1-mini": ("gpt-4.1-mini", None),
@@ -684,7 +700,7 @@ class ResponsesBody(BaseModel):
         if model_label.startswith("openai_responses."):
             model_label = model_label.split(".", 1)[1]
         if not model_label:
-            model_label = "gpt-5.1"
+            model_label = "gpt-5.2"
 
         identity_preamble = (
             "You are the OpenAI model backing the WebUI model ID '{label}'. "
@@ -735,7 +751,7 @@ class Pipe:
 
         # 2) Models
         MODEL_ID: str = Field(
-            default="gpt-5-auto, gpt-5.1, gpt-5-pro, gpt-5-chat-latest, gpt-5-thinking, gpt-5-thinking-high, gpt-5-thinking-minimal, gpt-4.1-nano, chatgpt-4o-latest, o3, gpt-4o",
+            default="gpt-5-auto, gpt-5.2, gpt-5.2-pro, gpt-5.1, gpt-5-pro, gpt-5-chat-latest, gpt-5.2-chat-latest, gpt-5-thinking, gpt-5-thinking-high, gpt-5-thinking-minimal, gpt-4.1-nano, chatgpt-4o-latest, o3, gpt-4o",
             description=(
                 "Comma separated OpenAI model IDs. Each ID becomes a model entry in WebUI. "
                 "Supports all official OpenAI model IDs and pseudo IDs: "
@@ -1030,10 +1046,10 @@ class Pipe:
                 reasoning.setdefault("effort", effort)
                 responses_body.reasoning = reasoning
 
-        # GPT-5-PRO does not support streaming; enforce non-streaming mode
+        # GPT-5-PRO variants do not support streaming; enforce non-streaming mode
         # regardless of whether it was explicitly chosen or selected by the
         # router.
-        if responses_body.model == "gpt-5-pro":
+        if responses_body.model in {"gpt-5-pro", "gpt-5.2-pro"}:
             responses_body.stream = False
 
         # Normalize to family-level model name (e.g., 'o3' from 'o3-2025-04-16') to be used for feature detection.
@@ -1041,7 +1057,7 @@ class Pipe:
         model_family = re.sub(r"-\d{4}-\d{2}-\d{2}$", "", responses_body.model)
 
         # Enforce reasoning.effort for GPT-5 Pro: API only accepts 'high' for this model.
-        if model_family == "gpt-5-pro":
+        if model_family in {"gpt-5-pro", "gpt-5.2-pro"}:
             reasoning_params = dict(responses_body.reasoning or {})
             reasoning_params["effort"] = "high"
             responses_body.reasoning = reasoning_params
@@ -2487,7 +2503,7 @@ class Pipe:
 
             # 3.1 Direct to GPT-5 Pro
             if pro_requested or char_len > 4000 or ultra_hard_hit:
-                return "gpt-5-pro"
+                return "gpt-5.2-pro"
 
             # 3.2 Thinking models (gpt-5 + reasoning.effort)
             if reasoning_on or heavy_hit or "explain your reasoning" in lower:
@@ -2505,9 +2521,9 @@ class Pipe:
                 # Default thinking level.
                 return "gpt-5-thinking"
 
-            # 3.3 Medium / long prompts → gpt-5.1
+            # 3.3 Medium / long prompts → gpt-5.2
             if char_len > 800 or word_len > 160:
-                return "gpt-5.1"
+                return "gpt-5.2"
 
             # 3.4 Short, truly simple prompts → gpt-4.1-nano
             if (
@@ -2549,10 +2565,12 @@ class Pipe:
         allowed_targets = {
             "gpt-4.1-nano",
             "gpt-4o",
+            "gpt-5.2",
             "gpt-5.1",
             "gpt-5-thinking-minimal",
             "gpt-5-thinking",
             "gpt-5-thinking-high",
+            "gpt-5.2-pro",
             "gpt-5-pro",
         }
 
@@ -2572,10 +2590,12 @@ class Pipe:
             "You must respond with EXACTLY ONE of these model IDs (no extra text):\n"
             "  - gpt-4.1-nano\n"
             "  - gpt-4o\n"
+            "  - gpt-5.2\n"
             "  - gpt-5.1\n"
             "  - gpt-5-thinking-minimal\n"
             "  - gpt-5-thinking\n"
             "  - gpt-5-thinking-high\n"
+            "  - gpt-5.2-pro\n"
             "  - gpt-5-pro\n"
             "\n"
             "Model guidance (based on OpenAI documentation):\n"
@@ -2583,7 +2603,7 @@ class Pipe:
             "  technical, not code-heavy, and do not require detailed reasoning.\n"
             "- Use gpt-4o for normal chat, everyday questions, lightweight coding,\n"
             "  and typical multimodal use where ultra-deep reasoning is not required.\n"
-            "- Use gpt-5.1 when the prompt is long or somewhat complex, where extra\n"
+            "- Use gpt-5.2 when the prompt is long or somewhat complex, where extra\n"
             "  reasoning, robustness, or instruction-following is helpful, but full\n"
             "  step-by-step reasoning is not strictly necessary.\n"
             "- Use gpt-5-thinking-minimal / gpt-5-thinking / gpt-5-thinking-high when\n"
@@ -2592,9 +2612,10 @@ class Pipe:
             "  math/physics, or deep code analysis.\n"
             "- Prefer gpt-5-thinking-minimal for light reasoning, gpt-5-thinking for\n"
             "  most reasoning tasks, and gpt-5-thinking-high for especially hard ones.\n"
-            "- Use gpt-5-pro ONLY when the user explicitly requests the Pro model, or\n"
-            "  when the task is clearly extremely difficult, research-grade, or very\n"
-            "  long and complex, where the absolute best quality is required.\n"
+            "- Use gpt-5.2-pro (or gpt-5-pro if explicitly requested) ONLY when the user\n"
+            "  requests the Pro model, or when the task is clearly extremely difficult,\n"
+            "  research-grade, or very long and complex, where the absolute best\n"
+            "  quality is required.\n"
             "\n"
             "Additional rules:\n"
             "- If SPEED_OVER_QUALITY is true, bias towards cheaper models when in doubt.\n"
@@ -3011,7 +3032,7 @@ def _normalize_model_for_pricing(model: str) -> str:
 
     We try exact match first, then fall back to stripping common prefixes used
     in Open WebUI (e.g. ``openai_responses.gpt-5.1``) and finally to a safe
-    default of ``gpt-5.1``.
+    default of ``gpt-5.2``.
     """
     model = (model or "").strip()
     if model in MODEL_PRICING_USD_PER_MTOK:
@@ -3025,7 +3046,7 @@ def _normalize_model_for_pricing(model: str) -> str:
                 return candidate
 
     # Fallback – assume standard GPT-5 pricing
-    return "gpt-5.1"
+    return "gpt-5.2"
 
 
 def _extract_image_count(usage: dict | None) -> int:
@@ -3292,6 +3313,7 @@ def format_cost_summary(
             "gpt-5-thinking-mini": "gpt-5-mini",
             "gpt-5-thinking-mini-minimal": "gpt-5-mini",
             "gpt-5-pro": "gpt-5-pro",
+            "gpt-5.2": "gpt-5.2",
             "gpt-5.1": "gpt-5.1",
             "gpt-4.1-mini": "gpt-4.1-mini",
             "gpt-4.1-nano": "gpt-4.1-nano",
@@ -3309,6 +3331,7 @@ def format_cost_summary(
             "gpt-5.1-thinking-low": "low",
             "gpt-5.1-thinking-medium": "medium",
             "gpt-5.1-thinking-high": "high",
+            "gpt-5.2-pro": "high",
             "gpt-5-pro": "high",
         }.get(pseudo_key)
 
