@@ -171,6 +171,7 @@ MODEL_PRICING_USD_PER_MTOK = {
     "gpt-4.1": {"input": 2.00, "output": 8.00},
     "gpt-4.1-mini": {"input": 0.40, "output": 1.60},
     # For nano pricing we fall back to a conservative estimate.
+    "gpt-5-nano": {"input": 0.10, "output": 1.40},
     "gpt-4.1-nano": {"input": 0.10, "output": 1.40},
     # 4o text pricing (audio has different rates and is not handled here)
     "gpt-4o": {"input": 2.50, "output": 10.00},
@@ -249,7 +250,6 @@ FEATURE_SUPPORT = {
         "gpt-4.1-mini",
         "gpt-4o",
         "gpt-4o-mini",
-        "gpt-4.1-nano",
         "o3",
     },  # OpenAI's built-in image generation tool.
     "function_calling": {
@@ -266,7 +266,6 @@ FEATURE_SUPPORT = {
         "gpt-4.1-mini",
         "gpt-4o",
         "gpt-4o-mini",
-        "gpt-4.1-nano",
         "o3",
         "o4-mini",
         "o3-mini",
@@ -394,6 +393,7 @@ class CompletionsBody(BaseModel):
             # Additional pseudo → real mappings
             "gpt-5.2": ("gpt-5.2", None),
             "gpt-5.1": ("gpt-5.1", None),
+            "gpt-5-nano": ("gpt-5-nano", None),
             "gpt-4.1-nano": ("gpt-4.1-nano", None),
             "gpt-4.1-mini": ("gpt-4.1-mini", None),
             # Backwards compatibility
@@ -854,7 +854,7 @@ class Pipe:
 
         # 2) Models
         MODEL_ID: str = Field(
-            default="gpt-5-auto, gpt-5.2, gpt-5.2-pro, gpt-5.1, gpt-5-pro, gpt-5-chat-latest, gpt-5.2-chat-latest, gpt-5-thinking, gpt-5-thinking-high, gpt-5-thinking-minimal, gpt-4.1-nano, chatgpt-4o-latest, o3, gpt-4o",
+            default="gpt-5-auto, gpt-5.2, gpt-5.2-pro, gpt-5.1, gpt-5-pro, gpt-5-chat-latest, gpt-5.2-chat-latest, gpt-5-thinking, gpt-5-thinking-high, gpt-5-thinking-minimal, gpt-5-nano, chatgpt-4o-latest, o3, gpt-4o",
             description=(
                 "Comma separated OpenAI model IDs. Each ID becomes a model entry in WebUI. "
                 "Supports all official OpenAI model IDs and pseudo IDs: "
@@ -871,10 +871,10 @@ class Pipe:
         )
 
         GPT5_AUTO_ROUTER_MODEL: str = Field(
-            default="gpt-4.1-nano",
+            default="gpt-5-nano",
             description=(
                 "Lightweight model used internally to decide which concrete model "
-                "gpt-5-auto should route to (for example, gpt-4.1-nano or gpt-4o-mini)."
+                "gpt-5-auto should route to (for example, gpt-5-nano or gpt-4o-mini)."
             ),
         )
 
@@ -2520,7 +2520,7 @@ class Pipe:
         Router for the ``gpt-5-auto`` pseudo-model.
 
         Primary path:
-        - Use a small, cheap model (e.g. gpt-4.1-nano or gpt-4o-mini, controlled
+        - Use a small, cheap model (e.g. gpt-5-nano or gpt-4o-mini, controlled
           by the GPT5_AUTO_ROUTER_MODEL valve) to choose ONE target pseudo-model
           from a fixed list.
 
@@ -2551,7 +2551,7 @@ class Pipe:
 
         if not text:
             # No real content – stick to the cheapest reasonable default.
-            return "gpt-4.1-nano", self._debug_tag(valves, "fallback")
+            return "gpt-5-nano", self._debug_tag(valves, "fallback")
 
         lower = text.lower()
         char_len = len(text)
@@ -2681,7 +2681,7 @@ class Pipe:
             if char_len > 800 or word_len > 160:
                 return "gpt-5.2"
 
-            # 3.4 Short, truly simple prompts → gpt-4.1-nano
+            # 3.4 Short, truly simple prompts → gpt-5-nano
             if (
                 char_len < 80
                 and word_len < 15
@@ -2708,7 +2708,7 @@ class Pipe:
                 )
                 and not ("image" in lower or "picture" in lower or "photo" in lower)
             ):
-                return "gpt-4.1-nano"
+                return "gpt-5-nano"
 
             # 3.5 Default general assistant choice → gpt-4o
             return "gpt-4o"
@@ -2716,10 +2716,10 @@ class Pipe:
         # --------------------------------------------------------------
         # 4. Primary path: call a small router model
         # --------------------------------------------------------------
-        router_model = getattr(valves, "GPT5_AUTO_ROUTER_MODEL", "") or "gpt-4.1-nano"
+        router_model = getattr(valves, "GPT5_AUTO_ROUTER_MODEL", "") or "gpt-5-nano"
 
         allowed_targets = {
-            "gpt-4.1-nano",
+            "gpt-5-nano",
             "gpt-4o",
             "gpt-5.2",
             "gpt-5.1",
@@ -2744,7 +2744,7 @@ class Pipe:
             "the CHEAPEST model that can reasonably handle the task with good quality.\n"
             "\n"
             "You must respond with EXACTLY ONE of these model IDs (no extra text):\n"
-            "  - gpt-4.1-nano\n"
+            "  - gpt-5-nano\n"
             "  - gpt-4o\n"
             "  - gpt-5.2\n"
             "  - gpt-5.1\n"
@@ -2755,7 +2755,7 @@ class Pipe:
             "  - gpt-5-pro\n"
             "\n"
             "Model guidance (based on OpenAI documentation):\n"
-            "- Use gpt-4.1-nano for very short, simple prompts that are not deeply\n"
+            "- Use gpt-5-nano for very short, simple prompts that are not deeply\n"
             "  technical, not code-heavy, and do not require detailed reasoning.\n"
             "- Use gpt-4o for normal chat, everyday questions, lightweight coding,\n"
             "  and typical multimodal use where ultra-deep reasoning is not required.\n"
@@ -3471,6 +3471,7 @@ def format_cost_summary(
             "gpt-5-pro": "gpt-5-pro",
             "gpt-5.2": "gpt-5.2",
             "gpt-5.1": "gpt-5.1",
+            "gpt-5-nano": "gpt-5-nano",
             "gpt-4.1-mini": "gpt-4.1-mini",
             "gpt-4.1-nano": "gpt-4.1-nano",
             "gpt-5-auto": normalized_actual,

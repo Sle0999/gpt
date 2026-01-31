@@ -65,6 +65,7 @@ MODEL_PRICING_USD_PER_MTOK = {
     "gpt-4.1": {"input": 2.00, "output": 8.00},
     "gpt-4.1-mini": {"input": 0.40, "output": 1.60},
     # For nano pricing we fall back to a conservative estimate.
+    "gpt-5-nano": {"input": 0.10, "output": 1.40},
     "gpt-4.1-nano": {"input": 0.10, "output": 1.40},
     # 4o text pricing (audio has different rates and is not handled here)
     "gpt-4o": {"input": 2.50, "output": 10.00},
@@ -129,7 +130,6 @@ FEATURE_SUPPORT = {
         "gpt-4.1-mini",
         "gpt-4o",
         "gpt-4o-mini",
-        "gpt-4.1-nano",
         "o3",
     },  # OpenAI's built-in image generation tool.
     "function_calling": {
@@ -144,7 +144,6 @@ FEATURE_SUPPORT = {
         "gpt-4.1-mini",
         "gpt-4o",
         "gpt-4o-mini",
-        "gpt-4.1-nano",
         "o3",
         "o4-mini",
         "o3-mini",
@@ -262,6 +261,7 @@ class CompletionsBody(BaseModel):
             "gpt-5-auto": ("gpt-5.1", None),
             # Additional pseudo → real mappings
             "gpt-5.1": ("gpt-5.1", None),
+            "gpt-5-nano": ("gpt-5-nano", None),
             "gpt-4.1-nano": ("gpt-4.1-nano", None),
             "gpt-4.1-mini": ("gpt-4.1-mini", None),
             # Backwards compatibility
@@ -721,7 +721,7 @@ class Pipe:
 
         # 2) Models
         MODEL_ID: str = Field(
-            default="gpt-5-auto, gpt-5.1, gpt-5-pro, gpt-5-chat-latest, gpt-5-thinking, gpt-5-thinking-high, gpt-5-thinking-minimal, gpt-4.1-nano, chatgpt-4o-latest, o3, gpt-4o",
+            default="gpt-5-auto, gpt-5.1, gpt-5-pro, gpt-5-chat-latest, gpt-5-thinking, gpt-5-thinking-high, gpt-5-thinking-minimal, gpt-5-nano, chatgpt-4o-latest, o3, gpt-4o",
             description=(
                 "Comma separated OpenAI model IDs. Each ID becomes a model entry in WebUI. "
                 "Supports all official OpenAI model IDs and pseudo IDs: "
@@ -2279,7 +2279,7 @@ class Pipe:
         inspects the last user message plus a few valve settings and picks
         one of the concrete models you have configured in WebUI:
 
-        - ``gpt-4.1-nano``  (very small / very cheap)
+        - ``gpt-5-nano``  (very small / very cheap)
         - ``gpt-4o``        (fast general multimodal)
         - ``gpt-5.1``       (fast GPT-5-level reasoning)
         - ``gpt-5-thinking``
@@ -2314,7 +2314,7 @@ class Pipe:
 
         if not text:
             # No real content – cheapest reasonable default.
-            return "gpt-4.1-nano"
+            return "gpt-5-nano"
 
         lower = text.lower()
         char_len = len(text)
@@ -2424,7 +2424,7 @@ class Pipe:
         if char_len > 800 or word_len > 160:
             return "gpt-5.1"
 
-        # Short, truly simple requests → gpt-4.1-nano for maximum cost
+        # Short, truly simple requests → gpt-5-nano for maximum cost
         # savings. We avoid routing to nano if the text looks conceptually
         # heavy (even if short), e.g. contains advanced / scientific cues.
         if (
@@ -2453,7 +2453,7 @@ class Pipe:
             )
             and not ("image" in lower or "picture" in lower or "photo" in lower)
         ):
-            return "gpt-4.1-nano"
+            return "gpt-5-nano"
 
         # Default general assistant choice → gpt-4o.
         return "gpt-4o"
@@ -3064,6 +3064,7 @@ def format_cost_summary(
             "gpt-5-pro": "gpt-5-pro",
             "gpt-5.1": "gpt-5.1",
             "gpt-4.1-mini": "gpt-4.1-mini",
+            "gpt-5-nano": "gpt-5-nano",
             "gpt-4.1-nano": "gpt-4.1-nano",
             "gpt-5-auto": normalized_actual,
         }

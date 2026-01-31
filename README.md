@@ -16,9 +16,9 @@ This README lists **only the modifications** introduced in my v23 fork — not t
 A full routing engine replaces the original static model mapping.
 
 ### **New routing capabilities**
-- Uses a lightweight model (default: `gpt-4.1-nano`) to classify the prompt.
+- Uses a lightweight model (default: `gpt-5-nano`) to classify the prompt.
 - Applies layered heuristics:
-  - **Simple / short** → `gpt-4.1-nano`
+  - **Simple / short** → `gpt-5-nano`
   - **General / coding / mixed** → `gpt-4o`
   - **Reasoning-heavy** → `gpt-5/5.1` with appropriate effort
   - **Deep research / advanced math / physics** → `gpt-5-pro`
@@ -43,7 +43,7 @@ v23 adds broad support for OpenAI’s newest models and your custom IDs.
 ### **New models supported**
 - GPT-5.1, 5.1-mini, 5.1-nano  
 - GPT-5-Pro (forced `effort="high"`)  
-- Additional 4.1-nano / mini routing options  
+- Additional 5-nano / 4.1-mini routing options  
 - Full compatibility with o-series reasoning modes
 
 ### **New pseudo-model mapping layer**
