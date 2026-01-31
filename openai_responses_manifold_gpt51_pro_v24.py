@@ -1067,6 +1067,7 @@ class Pipe:
         valves = self._merge_valves(
             self.valves, self.UserValves.model_validate(__user__.get("valves", {}))
         )
+        self._last_event_emitter = __event_emitter__
         openwebui_model_id = __metadata__.get("model", {}).get(
             "id", ""
         )  # Full model ID, e.g. "openai_responses.gpt-4o"
@@ -2796,7 +2797,6 @@ class Pipe:
             stream=False,
             store=False,
             temperature=0,
-            reasoning={"effort": "minimal"},
             max_output_tokens=16,
             tools=None,
             include=None,
@@ -2805,10 +2805,13 @@ class Pipe:
         routed: str = ""
 
         try:
-            response = await self.send_openai_responses_nonstreaming_request(
-                router_body.model_dump(exclude_none=True),
-                api_key=valves.API_KEY,
-                base_url=valves.BASE_URL,
+            response = await asyncio.wait_for(
+                self.send_openai_responses_nonstreaming_request(
+                    router_body.model_dump(exclude_none=True),
+                    api_key=valves.API_KEY,
+                    base_url=valves.BASE_URL,
+                ),
+                timeout=8,
             )
 
             text_parts: list[str] = []
@@ -2833,6 +2836,18 @@ class Pipe:
                     "gpt-5-auto router model failed; falling back to heuristic",
                     exc_info=exc,
                 )
+            if getattr(valves, "GPT5_AUTO_ROUTER_DEBUG", False):
+                try:
+                    await self._emit_notification(
+                        getattr(self, "_last_event_emitter", None),
+                        (
+                            "Router failed: "
+                            f"{type(exc).__name__}: {str(exc)}"
+                        ),
+                        level="warning",
+                    )
+                except Exception:
+                    pass
             routed = ""
 
         # If the router gave us something valid, use it.
