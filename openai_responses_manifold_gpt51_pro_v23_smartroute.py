@@ -13,6 +13,7 @@ from __future__ import annotations
 # ─────────────────────────────────────────────────────────────────────────────
 # Standard library, third-party, and Open WebUI imports
 # Standard library imports
+import copy
 import textwrap
 from typing import Tuple
 import asyncio
@@ -39,6 +40,108 @@ from typing import (
     Union,
 )
 from urllib.parse import urlparse
+
+log = logging.getLogger("openai_responses")
+
+# Best-effort secret scrubbing for logs
+_REDACT_PAT = re.compile(r"sk-[A-Za-z0-9_\-]{10,}")
+
+
+def redact(obj):
+    """Deep redact API keys/secrets before logging."""
+    if obj is None:
+        return None
+
+    if isinstance(obj, str):
+        return _REDACT_PAT.sub("sk-***REDACTED***", obj)
+
+    if isinstance(obj, list):
+        return [redact(x) for x in obj]
+
+    if isinstance(obj, dict):
+        out = {}
+        for k, v in obj.items():
+            if "key" in str(k).lower() or "token" in str(k).lower():
+                out[k] = "***REDACTED***"
+            else:
+                out[k] = redact(v)
+        return out
+
+    return obj
+
+
+def normalize_responses_tools(tools):
+    """
+    Convert tool definitions into correct Responses API format.
+
+    Ensures every function tool becomes:
+
+    {
+      "type": "function",
+      "name": "...",
+      "description": "...",
+      "parameters": {...},
+      "strict": false
+    }
+    """
+    if not tools:
+        return []
+
+    iterable = tools.values() if isinstance(tools, dict) else tools
+    normalized = []
+
+    for t in iterable:
+        if not isinstance(t, dict):
+            continue
+
+        # Chat-Completions wrapper style:
+        # {"type":"function","function":{"name":...}}
+        if t.get("type") == "function" and isinstance(t.get("function"), dict):
+            fn = t["function"]
+            name = fn.get("name")
+
+            if not name:
+                log.warning("Dropping invalid tool missing function.name: %s", redact(t))
+                continue
+
+            normalized.append(
+                {
+                    "type": "function",
+                    "name": name,
+                    "description": fn.get("description", "") or "",
+                    "parameters": fn.get("parameters", {}) or {},
+                    "strict": False,  # FORCE NON-STRICT
+                }
+            )
+            continue
+
+        # Already Responses-style:
+        # {"type":"function","name":"..."}
+        if t.get("type") == "function":
+            if not t.get("name"):
+                log.warning("Dropping invalid tool missing name: %s", redact(t))
+                continue
+
+            tool = copy.deepcopy(t)
+            tool.setdefault("description", "")
+            tool.setdefault("parameters", {})
+            tool["strict"] = False
+
+            normalized.append(tool)
+            continue
+
+        # Non-function tools pass through unchanged
+        normalized.append(copy.deepcopy(t))
+
+    # Deduplicate function tools by name
+    dedup = {}
+    for tool in normalized:
+        key = tool["name"] if tool.get("type") == "function" else tool.get(
+            "type", "unknown"
+        )
+        dedup[key] = tool
+
+    return list(dedup.values())
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 1.1 Model Pricing (Approximate)
@@ -68,7 +171,7 @@ MODEL_PRICING_USD_PER_MTOK = {
     "gpt-4.1": {"input": 2.00, "output": 8.00},
     "gpt-4.1-mini": {"input": 0.40, "output": 1.60},
     # For nano pricing we fall back to a conservative estimate.
-    "gpt-4.1-nano": {"input": 0.10, "output": 1.40},
+    "gpt-5-nano": {"input": 0.10, "output": 1.40},
     # 4o text pricing (audio has different rates and is not handled here)
     "gpt-4o": {"input": 2.50, "output": 10.00},
 }
@@ -146,7 +249,7 @@ FEATURE_SUPPORT = {
         "gpt-4.1-mini",
         "gpt-4o",
         "gpt-4o-mini",
-        "gpt-4.1-nano",
+        "gpt-5-nano",
         "o3",
     },  # OpenAI's built-in image generation tool.
     "function_calling": {
@@ -163,7 +266,7 @@ FEATURE_SUPPORT = {
         "gpt-4.1-mini",
         "gpt-4o",
         "gpt-4o-mini",
-        "gpt-4.1-nano",
+        "gpt-5-nano",
         "o3",
         "o4-mini",
         "o3-mini",
@@ -291,7 +394,7 @@ class CompletionsBody(BaseModel):
             # Additional pseudo → real mappings
             "gpt-5.2": ("gpt-5.2", None),
             "gpt-5.1": ("gpt-5.1", None),
-            "gpt-4.1-nano": ("gpt-4.1-nano", None),
+            "gpt-5-nano": ("gpt-5-nano", None),
             "gpt-4.1-mini": ("gpt-4.1-mini", None),
             # Backwards compatibility
             "o3-mini-high": ("o3-mini", "high"),
@@ -751,7 +854,7 @@ class Pipe:
 
         # 2) Models
         MODEL_ID: str = Field(
-            default="gpt-5-auto, gpt-5.2, gpt-5.2-pro, gpt-5.1, gpt-5-pro, gpt-5-chat-latest, gpt-5.2-chat-latest, gpt-5-thinking, gpt-5-thinking-high, gpt-5-thinking-minimal, gpt-4.1-nano, chatgpt-4o-latest, o3, gpt-4o",
+            default="gpt-5-auto, gpt-5.2, gpt-5.2-pro, gpt-5.1, gpt-5-pro, gpt-5-chat-latest, gpt-5.2-chat-latest, gpt-5-thinking, gpt-5-thinking-high, gpt-5-thinking-minimal, gpt-5-nano, chatgpt-4o-latest, o3, gpt-4o",
             description=(
                 "Comma separated OpenAI model IDs. Each ID becomes a model entry in WebUI. "
                 "Supports all official OpenAI model IDs and pseudo IDs: "
@@ -768,10 +871,10 @@ class Pipe:
         )
 
         GPT5_AUTO_ROUTER_MODEL: str = Field(
-            default="gpt-4.1-nano",
+            default="gpt-5-nano",
             description=(
                 "Lightweight model used internally to decide which concrete model "
-                "gpt-5-auto should route to (for example, gpt-4.1-nano or gpt-4o-mini)."
+                "gpt-5-auto should route to (for example, gpt-5-nano or gpt-4o-mini)."
             ),
         )
 
@@ -1924,6 +2027,7 @@ class Pipe:
             "instructions": body.get("instructions", ""),
             "input": body.get("input", ""),
             "stream": False,
+            "truncation": "auto",
         }
 
         response = await self.send_openai_responses_nonstreaming_request(
@@ -1964,9 +2068,41 @@ class Pipe:
         }
         url = base_url.rstrip("/") + "/responses"
 
+        # Normalize tool schema into Responses API format
+        request_body["tools"] = normalize_responses_tools(request_body.get("tools"))
+
+        # Preflight validation: fail early if still broken
+        for i, tool in enumerate(request_body.get("tools") or []):
+            if tool.get("type") == "function" and not tool.get("name"):
+                raise ValueError(
+                    f"Bug: tools[{i}] missing required name after normalization"
+                )
+
         buf = bytearray()
         async with self.session.post(url, json=request_body, headers=headers) as resp:
-            resp.raise_for_status()
+            # Log outbound payload (redacted)
+            log.debug(
+                "Outgoing OpenAI /responses payload:\n%s",
+                json.dumps(redact(request_body), indent=2, ensure_ascii=False),
+            )
+
+            if resp.status >= 400:
+                err_text = await resp.text()
+
+                try:
+                    err_json = json.loads(err_text)
+                    msg = err_json.get("error", {}).get("message") or err_text
+                except Exception:
+                    err_json = {"raw": err_text}
+                    msg = err_text
+
+                log.error(
+                    "OpenAI API ERROR %s\nFull body:\n%s",
+                    resp.status,
+                    json.dumps(redact(err_json), indent=2, ensure_ascii=False),
+                )
+
+                raise RuntimeError(f"OpenAI API error {resp.status}: {msg}")
 
             async for chunk in resp.content.iter_chunked(4096):
                 buf.extend(chunk)
@@ -2015,20 +2151,40 @@ class Pipe:
         }
         url = base_url.rstrip("/") + "/responses"
 
+        # Normalize tool schema into Responses API format
+        request_params["tools"] = normalize_responses_tools(request_params.get("tools"))
+
+        # Preflight validation: fail early if still broken
+        for i, tool in enumerate(request_params.get("tools") or []):
+            if tool.get("type") == "function" and not tool.get("name"):
+                raise ValueError(
+                    f"Bug: tools[{i}] missing required name after normalization"
+                )
+
         async with self.session.post(url, json=request_params, headers=headers) as resp:
-            try:
-                resp.raise_for_status()
-            except Exception as e:
+            # Log outbound payload (redacted)
+            log.debug(
+                "Outgoing OpenAI /responses payload:\n%s",
+                json.dumps(redact(request_params), indent=2, ensure_ascii=False),
+            )
+
+            if resp.status >= 400:
+                err_text = await resp.text()
+
                 try:
-                    err_text = await resp.text()
-                    try:
-                        err_json = json.loads(err_text)
-                        msg = err_json.get("error", {}).get("message") or err_text
-                    except Exception:
-                        msg = err_text
-                    raise RuntimeError(f"OpenAI API error {resp.status}: {msg}") from e
+                    err_json = json.loads(err_text)
+                    msg = err_json.get("error", {}).get("message") or err_text
                 except Exception:
-                    raise
+                    err_json = {"raw": err_text}
+                    msg = err_text
+
+                log.error(
+                    "OpenAI API ERROR %s\nFull body:\n%s",
+                    resp.status,
+                    json.dumps(redact(err_json), indent=2, ensure_ascii=False),
+                )
+
+                raise RuntimeError(f"OpenAI API error {resp.status}: {msg}")
             return await resp.json()
 
     async def _get_or_init_http_session(self) -> aiohttp.ClientSession:
@@ -2364,7 +2520,7 @@ class Pipe:
         Router for the ``gpt-5-auto`` pseudo-model.
 
         Primary path:
-        - Use a small, cheap model (e.g. gpt-4.1-nano or gpt-4o-mini, controlled
+        - Use a small, cheap model (e.g. gpt-5-nano or gpt-4o-mini, controlled
           by the GPT5_AUTO_ROUTER_MODEL valve) to choose ONE target pseudo-model
           from a fixed list.
 
@@ -2395,7 +2551,7 @@ class Pipe:
 
         if not text:
             # No real content – stick to the cheapest reasonable default.
-            return "gpt-4.1-nano", self._debug_tag(valves, "fallback")
+            return "gpt-5-nano", self._debug_tag(valves, "fallback")
 
         lower = text.lower()
         char_len = len(text)
@@ -2525,7 +2681,7 @@ class Pipe:
             if char_len > 800 or word_len > 160:
                 return "gpt-5.2"
 
-            # 3.4 Short, truly simple prompts → gpt-4.1-nano
+            # 3.4 Short, truly simple prompts → gpt-5-nano
             if (
                 char_len < 80
                 and word_len < 15
@@ -2552,7 +2708,7 @@ class Pipe:
                 )
                 and not ("image" in lower or "picture" in lower or "photo" in lower)
             ):
-                return "gpt-4.1-nano"
+                return "gpt-5-nano"
 
             # 3.5 Default general assistant choice → gpt-4o
             return "gpt-4o"
@@ -2560,10 +2716,10 @@ class Pipe:
         # --------------------------------------------------------------
         # 4. Primary path: call a small router model
         # --------------------------------------------------------------
-        router_model = getattr(valves, "GPT5_AUTO_ROUTER_MODEL", "") or "gpt-4.1-nano"
+        router_model = getattr(valves, "GPT5_AUTO_ROUTER_MODEL", "") or "gpt-5-nano"
 
         allowed_targets = {
-            "gpt-4.1-nano",
+            "gpt-5-nano",
             "gpt-4o",
             "gpt-5.2",
             "gpt-5.1",
@@ -2588,7 +2744,7 @@ class Pipe:
             "the CHEAPEST model that can reasonably handle the task with good quality.\n"
             "\n"
             "You must respond with EXACTLY ONE of these model IDs (no extra text):\n"
-            "  - gpt-4.1-nano\n"
+            "  - gpt-5-nano\n"
             "  - gpt-4o\n"
             "  - gpt-5.2\n"
             "  - gpt-5.1\n"
@@ -2599,7 +2755,7 @@ class Pipe:
             "  - gpt-5-pro\n"
             "\n"
             "Model guidance (based on OpenAI documentation):\n"
-            "- Use gpt-4.1-nano for very short, simple prompts that are not deeply\n"
+            "- Use gpt-5-nano for very short, simple prompts that are not deeply\n"
             "  technical, not code-heavy, and do not require detailed reasoning.\n"
             "- Use gpt-4o for normal chat, everyday questions, lightweight coding,\n"
             "  and typical multimodal use where ultra-deep reasoning is not required.\n"
@@ -3316,7 +3472,7 @@ def format_cost_summary(
             "gpt-5.2": "gpt-5.2",
             "gpt-5.1": "gpt-5.1",
             "gpt-4.1-mini": "gpt-4.1-mini",
-            "gpt-4.1-nano": "gpt-4.1-nano",
+            "gpt-5-nano": "gpt-5-nano",
             "gpt-5-auto": normalized_actual,
         }
 
