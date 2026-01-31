@@ -13,6 +13,7 @@ from __future__ import annotations
 # ─────────────────────────────────────────────────────────────────────────────
 # Standard library, third-party, and Open WebUI imports
 # Standard library imports
+import copy
 import textwrap
 from typing import Tuple
 import asyncio
@@ -39,6 +40,108 @@ from typing import (
     Union,
 )
 from urllib.parse import urlparse
+
+log = logging.getLogger("openai_responses")
+
+# Best-effort secret scrubbing for logs
+_REDACT_PAT = re.compile(r"sk-[A-Za-z0-9_\-]{10,}")
+
+
+def redact(obj):
+    """Deep redact API keys/secrets before logging."""
+    if obj is None:
+        return None
+
+    if isinstance(obj, str):
+        return _REDACT_PAT.sub("sk-***REDACTED***", obj)
+
+    if isinstance(obj, list):
+        return [redact(x) for x in obj]
+
+    if isinstance(obj, dict):
+        out = {}
+        for k, v in obj.items():
+            if "key" in str(k).lower() or "token" in str(k).lower():
+                out[k] = "***REDACTED***"
+            else:
+                out[k] = redact(v)
+        return out
+
+    return obj
+
+
+def normalize_responses_tools(tools):
+    """
+    Convert tool definitions into correct Responses API format.
+
+    Ensures every function tool becomes:
+
+    {
+      "type": "function",
+      "name": "...",
+      "description": "...",
+      "parameters": {...},
+      "strict": false
+    }
+    """
+    if not tools:
+        return []
+
+    iterable = tools.values() if isinstance(tools, dict) else tools
+    normalized = []
+
+    for t in iterable:
+        if not isinstance(t, dict):
+            continue
+
+        # Chat-Completions wrapper style:
+        # {"type":"function","function":{"name":...}}
+        if t.get("type") == "function" and isinstance(t.get("function"), dict):
+            fn = t["function"]
+            name = fn.get("name")
+
+            if not name:
+                log.warning("Dropping invalid tool missing function.name: %s", redact(t))
+                continue
+
+            normalized.append(
+                {
+                    "type": "function",
+                    "name": name,
+                    "description": fn.get("description", "") or "",
+                    "parameters": fn.get("parameters", {}) or {},
+                    "strict": False,  # FORCE NON-STRICT
+                }
+            )
+            continue
+
+        # Already Responses-style:
+        # {"type":"function","name":"..."}
+        if t.get("type") == "function":
+            if not t.get("name"):
+                log.warning("Dropping invalid tool missing name: %s", redact(t))
+                continue
+
+            tool = copy.deepcopy(t)
+            tool.setdefault("description", "")
+            tool.setdefault("parameters", {})
+            tool["strict"] = False
+
+            normalized.append(tool)
+            continue
+
+        # Non-function tools pass through unchanged
+        normalized.append(copy.deepcopy(t))
+
+    # Deduplicate function tools by name
+    dedup = {}
+    for tool in normalized:
+        key = tool["name"] if tool.get("type") == "function" else tool.get(
+            "type", "unknown"
+        )
+        dedup[key] = tool
+
+    return list(dedup.values())
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 1.1 Model Pricing (Approximate)
@@ -1924,6 +2027,7 @@ class Pipe:
             "instructions": body.get("instructions", ""),
             "input": body.get("input", ""),
             "stream": False,
+            "truncation": "auto",
         }
 
         response = await self.send_openai_responses_nonstreaming_request(
@@ -1964,9 +2068,41 @@ class Pipe:
         }
         url = base_url.rstrip("/") + "/responses"
 
+        # Normalize tool schema into Responses API format
+        request_body["tools"] = normalize_responses_tools(request_body.get("tools"))
+
+        # Preflight validation: fail early if still broken
+        for i, tool in enumerate(request_body.get("tools") or []):
+            if tool.get("type") == "function" and not tool.get("name"):
+                raise ValueError(
+                    f"Bug: tools[{i}] missing required name after normalization"
+                )
+
         buf = bytearray()
         async with self.session.post(url, json=request_body, headers=headers) as resp:
-            resp.raise_for_status()
+            # Log outbound payload (redacted)
+            log.debug(
+                "Outgoing OpenAI /responses payload:\n%s",
+                json.dumps(redact(request_body), indent=2, ensure_ascii=False),
+            )
+
+            if resp.status >= 400:
+                err_text = await resp.text()
+
+                try:
+                    err_json = json.loads(err_text)
+                    msg = err_json.get("error", {}).get("message") or err_text
+                except Exception:
+                    err_json = {"raw": err_text}
+                    msg = err_text
+
+                log.error(
+                    "OpenAI API ERROR %s\nFull body:\n%s",
+                    resp.status,
+                    json.dumps(redact(err_json), indent=2, ensure_ascii=False),
+                )
+
+                raise RuntimeError(f"OpenAI API error {resp.status}: {msg}")
 
             async for chunk in resp.content.iter_chunked(4096):
                 buf.extend(chunk)
@@ -2015,20 +2151,40 @@ class Pipe:
         }
         url = base_url.rstrip("/") + "/responses"
 
+        # Normalize tool schema into Responses API format
+        request_params["tools"] = normalize_responses_tools(request_params.get("tools"))
+
+        # Preflight validation: fail early if still broken
+        for i, tool in enumerate(request_params.get("tools") or []):
+            if tool.get("type") == "function" and not tool.get("name"):
+                raise ValueError(
+                    f"Bug: tools[{i}] missing required name after normalization"
+                )
+
         async with self.session.post(url, json=request_params, headers=headers) as resp:
-            try:
-                resp.raise_for_status()
-            except Exception as e:
+            # Log outbound payload (redacted)
+            log.debug(
+                "Outgoing OpenAI /responses payload:\n%s",
+                json.dumps(redact(request_params), indent=2, ensure_ascii=False),
+            )
+
+            if resp.status >= 400:
+                err_text = await resp.text()
+
                 try:
-                    err_text = await resp.text()
-                    try:
-                        err_json = json.loads(err_text)
-                        msg = err_json.get("error", {}).get("message") or err_text
-                    except Exception:
-                        msg = err_text
-                    raise RuntimeError(f"OpenAI API error {resp.status}: {msg}") from e
+                    err_json = json.loads(err_text)
+                    msg = err_json.get("error", {}).get("message") or err_text
                 except Exception:
-                    raise
+                    err_json = {"raw": err_text}
+                    msg = err_text
+
+                log.error(
+                    "OpenAI API ERROR %s\nFull body:\n%s",
+                    resp.status,
+                    json.dumps(redact(err_json), indent=2, ensure_ascii=False),
+                )
+
+                raise RuntimeError(f"OpenAI API error {resp.status}: {msg}")
             return await resp.json()
 
     async def _get_or_init_http_session(self) -> aiohttp.ClientSession:
