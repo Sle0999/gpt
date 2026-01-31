@@ -2816,7 +2816,12 @@ class Pipe:
             if routed_raw:
                 # In case the model adds extra whitespace or commentary, just
                 # take the first token as the candidate model name.
-                routed = routed_raw.split()[0]
+                routed = routed_raw.split()[0].strip("`\"'.,;:()[]{}")
+                if routed not in allowed_targets:
+                    for candidate in allowed_targets:
+                        if candidate in routed_raw:
+                            routed = candidate
+                            break
 
         except Exception as exc:
             # If the router model fails (network, auth, rate limit, etc),
