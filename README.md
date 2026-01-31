@@ -1,4 +1,4 @@
-# OpenAI Responses Manifold – v23 “SmartRoute”
+# OpenAI Responses Manifold – v24 “SmartRoute”
 ### Improvements, Additions & Changes Made on Top of the Original
 
 **Built on top of:**  
@@ -6,11 +6,11 @@ https://github.com/jrkropp/open-webui-developer-toolkit/tree/main/functions/pipe
 *(original author: Justin Kropp)*  
 …but enhanced with a broad set of new features, a redesigned architecture, improved routing logic, and major optimizations throughout.
 
-This README lists **only the modifications** introduced in my v23 fork — not the original feature set.
+This README lists **only the modifications** introduced in my v24 fork — not the original feature set.
 
 ---
 
-# 🚀 Major Enhancements in v23
+# 🚀 Major Enhancements in v24
 
 ## 1. 🔮 SmartRoute System for `gpt-5-auto`
 A full routing engine replaces the original static model mapping.
@@ -20,8 +20,8 @@ A full routing engine replaces the original static model mapping.
 - Applies layered heuristics:
   - **Simple / short** → `gpt-4.1-nano`
   - **General / coding / mixed** → `gpt-4o`
-  - **Reasoning-heavy** → `gpt-5/5.1` with appropriate effort
-  - **Deep research / advanced math / physics** → `gpt-5-pro`
+  - **Reasoning-heavy** → `gpt-5.2` with appropriate effort
+  - **Deep research / advanced math / physics** → `gpt-5.2-pro`
 - Supports routing for your pseudo-model ecosystem.
 
 ### **New router valves**
@@ -38,20 +38,20 @@ Shows:
 ---
 
 ## 2. 🧱 Expanded Model & Pseudo-Model Support
-v23 adds broad support for OpenAI’s newest models and your custom IDs.
+v24 adds broad support for OpenAI’s newest models and your custom IDs.
 
 ### **New models supported**
-- GPT-5.1, 5.1-mini, 5.1-nano  
-- GPT-5-Pro (forced `effort="high"`)  
+- GPT-5.2 and GPT-5.2-Pro (forced `effort="high"`)  
+- GPT-5.2 thinking tiers: low / medium / high / xhigh  
 - Additional 4.1-nano / mini routing options  
 - Full compatibility with o-series reasoning modes
 
 ### **New pseudo-model mapping layer**
 Maps IDs like:
-- `gpt-5-thinking-low/medium/high`
-- `gpt-5.1-thinking-*`
+- `gpt-5-thinking-low/medium/high/xhigh`
+- `gpt-5.2-thinking-*`
 - `*-deep`
-- `gpt-5-pro-high`
+- `gpt-5.2-pro`
 To:
 - A real model  
 - A reasoning effort level  
@@ -62,7 +62,7 @@ To:
 ## 3. 🪪 Identity Preamble (New)
 The original manifold passed system instructions directly.
 
-v23 injects a clean **identity header** so:
+v24 injects a clean **identity header** so:
 - The model reports itself using the **exact WebUI model ID you selected**, not an internal backend model.
 - Meta-questions like *“what model are you?”* are answered correctly.
 
@@ -72,11 +72,11 @@ This applies to all pseudo-models and routed outputs.
 
 ## 4. 💰 Full Cost Tracking Engine (New)
 The original manifold had **no cost accounting**.  
-v23 introduces a full pricing system.
+v24 introduces a full pricing system.
 
 ### **New features**
 - Approximate pricing tables for:
-  - GPT-5, 5.1, 5-Pro  
+  - GPT-5.2, 5.2-Pro  
   - GPT-4.1 (all tiers)  
   - GPT-4o  
   - Router model pricing  
@@ -113,7 +113,7 @@ Major improvements over the original implementation.
 ---
 
 ## 6. 🔧 Input / Output Cleanup & Reliability Fixes
-v23 removes multiple sources of 400-errors and malformed requests.
+v24 removes multiple sources of 400-errors and malformed requests.
 
 ### **New sanitization**
 - Strips unsupported WebUI fields  
@@ -126,7 +126,7 @@ v23 removes multiple sources of 400-errors and malformed requests.
 ---
 
 ## 7. 🧠 Reasoning Effort & Summaries (Improved)
-v23 modifies and extends the reasoning system.
+v24 modifies and extends the reasoning system.
 
 ### **Changes**
 - Pseudo-models now map to correct `effort` levels.
@@ -145,13 +145,13 @@ v23 modifies and extends the reasoning system.
 
 ---
 
-# 🧾 Summary of v23 Additions
+# 🧾 Summary of v24 Additions
 
-v23 introduces **all of the following**, none of which exist in the original:
+v24 introduces **all of the following**, none of which exist in the original:
 
 - ✔ SmartRoute engine for `gpt-5-auto`  
 - ✔ Router-model classification + heuristic fallbacks  
-- ✔ Expanded model support (5.1, 5-Pro, nano, mini, o-series)  
+- ✔ Expanded model support (5.2, 5.2-Pro, nano, mini, o-series)  
 - ✔ Large pseudo-model mapping system  
 - ✔ Identity preamble for correct “what model are you?” answers  
 - ✔ Full cost accounting (tokens + images)  
@@ -169,5 +169,5 @@ v23 introduces **all of the following**, none of which exist in the original:
 
 # 💬 Notes
 
-This README represents **only the improvements** made in my fork (v23).  
+This README represents **only the improvements** made in my fork (v24).  
 All other architectural and base functionality belong to the original author.
