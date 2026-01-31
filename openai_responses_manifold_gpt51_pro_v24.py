@@ -2796,7 +2796,6 @@ class Pipe:
             ),
             stream=False,
             store=False,
-            temperature=0,
             max_output_tokens=16,
             tools=None,
             include=None,
