@@ -22,7 +22,7 @@ Fixes a regression where requests without an explicit `tools` field could be sen
 - If `tool_choice.type == "image_generation"`, the manifold now guarantees `{"type":"image_generation"}` is present in `tools` before sending.
 - Applied consistently to both streaming and non-streaming Responses requests.
 - Legacy `tool_choice` requests for function `generate_image` are normalized to native `image_generation` so image calls route to Responses built-in tooling.
-- The manifold now requests `include: ["image_generation_call.result"]` whenever image generation is enabled, then extracts image URLs/base64 from Responses output and appends renderable Markdown image blocks so generated images display in chat instead of only status text.
+- The manifold extracts image URLs/base64 from Responses output and appends renderable Markdown image blocks so generated images display in chat instead of only status text.
 
 ---
 

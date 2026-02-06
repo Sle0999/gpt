@@ -2143,14 +2143,6 @@ class Pipe:
             ):
                 request_body["tools"].append({"type": "image_generation"})
 
-        has_image_tool = any(
-            isinstance(t, dict) and t.get("type") == "image_generation"
-            for t in (request_body.get("tools") or [])
-        )
-        if has_image_tool:
-            request_body.setdefault("include", [])
-            if "image_generation_call.result" not in request_body["include"]:
-                request_body["include"].append("image_generation_call.result")
 
         # Preflight validation: fail early if still broken
         for i, tool in enumerate(request_body.get("tools") or []):
@@ -2252,14 +2244,6 @@ class Pipe:
             ):
                 request_params["tools"].append({"type": "image_generation"})
 
-        has_image_tool = any(
-            isinstance(t, dict) and t.get("type") == "image_generation"
-            for t in (request_params.get("tools") or [])
-        )
-        if has_image_tool:
-            request_params.setdefault("include", [])
-            if "image_generation_call.result" not in request_params["include"]:
-                request_params["include"].append("image_generation_call.result")
 
         # Preflight validation: fail early if still broken
         for i, tool in enumerate(request_params.get("tools") or []):
