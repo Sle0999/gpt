@@ -3,7 +3,7 @@ title: OpenAI Responses API Manifold
 id: openai_responses
 description: Brings OpenAI Response API support to Open WebUI, enabling features not possible via Completions API.
 required_open_webui_version: 0.6.3
-version: 24
+version: 34
 """
 
 from __future__ import annotations
@@ -100,7 +100,15 @@ def normalize_responses_tools(tools):
             fn = t["function"]
             name = fn.get("name")
 
+            # Map OpenWebUI image function tools to OpenAI native image_generation tool.
+            # Newer OpenWebUI builds sometimes include generate_image as a function tool
+            # without a callable implementation, leading to "Tool not found" at runtime.
+            if (name or "").strip() in {"generate_image", "create_image", "image_generation"}:
+                normalized.append({"type": "image_generation"})
+                continue
+
             if not name:
+
                 log.warning("Dropping invalid tool missing function.name: %s", redact(t))
                 continue
 
@@ -118,6 +126,11 @@ def normalize_responses_tools(tools):
         # Already Responses-style:
         # {"type":"function","name":"..."}
         if t.get("type") == "function":
+            # Map OpenWebUI image function tools to OpenAI native image_generation tool.
+            if (t.get("name") or "").strip() in {"generate_image", "create_image", "image_generation"}:
+                normalized.append({"type": "image_generation"})
+                continue
+
             if not t.get("name"):
                 log.warning("Dropping invalid tool missing name: %s", redact(t))
                 continue
@@ -230,6 +243,7 @@ FEATURE_SUPPORT = {
     },  # OpenAI's built-in web search tool.
     "image_gen_tool": {
         "gpt-5.2",
+        "gpt-5-auto",
         "gpt-5.1-mini",
         "gpt-5.1-nano",
         "gpt-5.2-pro",
@@ -359,7 +373,7 @@ class CompletionsBody(BaseModel):
             "gpt-5-thinking-high": ("gpt-5.2", "high"),
             "gpt-5-thinking-xhigh": ("gpt-5.2", "xhigh"),
             "gpt-5.2-thinking-low": ("gpt-5.2", "low"),
-            "gpt-5.2-thinking-medium": ("gpt-5.2", "medium"),
+            "gpt-5.2-thinking": ("gpt-5.2", "medium"),
             "gpt-5.2-thinking-high": ("gpt-5.2", "high"),
             "gpt-5.2-thinking-xhigh": ("gpt-5.2", "xhigh"),
             # Legacy aliases (map to new GPT-5.2 effort levels)
@@ -379,6 +393,7 @@ class CompletionsBody(BaseModel):
             "gpt-5-auto": ("gpt-5.2", None),
             # Additional pseudo → real mappings
             "gpt-5.2": ("gpt-5.2", None),
+            "gpt-5.2-thinking": ("gpt-5.2", "medium"),
             "gpt-5.1": ("gpt-5.2", None),
             "gpt-5": ("gpt-5.2", None),
             "gpt-5-chat-latest": ("gpt-5.2-chat-latest", None),
@@ -465,28 +480,41 @@ class ResponsesBody(BaseModel):
             if "spec" in item:
                 spec = item["spec"]
                 if isinstance(spec, dict):
-                    converted.append(
-                        {
-                            "type": "function",
-                            "name": spec.get("name", ""),
-                            "description": spec.get("description", ""),
-                            "parameters": spec.get("parameters", {}),
-                        }
-                    )
+                    name = (spec.get("name") or "").strip()
+
+                    # OpenWebUI's built-in image tool is often exposed as a *function*
+                    # named "generate_image". Newer WebUI builds may not provide a callable
+                    # for it in __tools__, which causes "Tool not found" when the model
+                    # selects it. Map it to OpenAI's native image_generation tool instead.
+                    if name in {"generate_image", "create_image", "image_generation"}:
+                        native.append({"type": "image_generation"})
+                    else:
+                        converted.append(
+                            {
+                                "type": "function",
+                                "name": name,
+                                "description": spec.get("description", ""),
+                                "parameters": spec.get("parameters", {}),
+                            }
+                        )
                 continue
 
             # b) Chat-Completions wrapper
             if item.get("type") == "function" and "function" in item:
                 fn = item["function"]
                 if isinstance(fn, dict):
-                    converted.append(
-                        {
-                            "type": "function",
-                            "name": fn.get("name", ""),
-                            "description": fn.get("description", ""),
-                            "parameters": fn.get("parameters", {}),
-                        }
-                    )
+                    name = (fn.get("name") or "").strip()
+                    if name in {"generate_image", "create_image", "image_generation"}:
+                        native.append({"type": "image_generation"})
+                    else:
+                        converted.append(
+                            {
+                                "type": "function",
+                                "name": name,
+                                "description": fn.get("description", ""),
+                                "parameters": fn.get("parameters", {}),
+                            }
+                        )
                 continue
 
             # c) Anything else (including web_search) → keep verbatim
@@ -599,16 +627,39 @@ class ResponsesBody(BaseModel):
 
         required_item_ids: set[str] = set()
 
-        # Gather all markers from assistant messages (if both IDs are provided)
+        # Gather all persisted item IDs from assistant messages (if both IDs are provided).
+        # In non-debug mode this manifold does NOT emit marker tags into assistant text;
+        # in that case we fall back to the per-message index stored in
+        # openai_responses_pipe.messages_index.
         if chat_id and openwebui_model_id:
+            messages_index: dict[str, dict] = {}
+            try:
+                chat_model = Chats.get_chat_by_id(chat_id)
+                if chat_model:
+                    pipe_root = (chat_model.chat or {}).get("openai_responses_pipe") or {}
+                    if isinstance(pipe_root, dict):
+                        messages_index = pipe_root.get("messages_index") or {}
+            except Exception:
+                messages_index = {}
+
             for m in messages:
-                if (
-                    m.get("role") == "assistant"
-                    and m.get("content")
-                    and contains_marker(m["content"])
-                ):
-                    for mk in extract_markers(m["content"], parsed=True):
+                if m.get("role") != "assistant":
+                    continue
+
+                content = m.get("content") or ""
+                if isinstance(content, str) and content and contains_marker(content):
+                    for mk in extract_markers(content, parsed=True):
                         required_item_ids.add(mk["ulid"])
+                    continue
+
+                mid = m.get("id") or m.get("message_id")
+                if not mid or not isinstance(messages_index, dict):
+                    continue
+                bucket = messages_index.get(mid)
+                if isinstance(bucket, dict):
+                    for iid in bucket.get("item_ids") or []:
+                        if isinstance(iid, str):
+                            required_item_ids.add(iid)
 
         # Fetch persisted items if both IDs are provided and there are encoded item IDs
         items_lookup: dict[str, dict] = {}
@@ -814,6 +865,17 @@ class ResponsesBody(BaseModel):
                 openwebui_model_id=openwebui_model_id,
             )
 
+        # Map OpenWebUI's image tool choice (often expressed as a function tool named
+        # "generate_image") to OpenAI's native image_generation tool choice.
+        tc = sanitized_params.get("tool_choice")
+        if isinstance(tc, dict):
+            tc_type = (tc.get("type") or "").strip()
+            if tc_type == "function":
+                fn = tc.get("function") or {}
+                fn_name = (fn.get("name") or "").strip() if isinstance(fn, dict) else ""
+                if fn_name in {"generate_image", "create_image", "image_generation"}:
+                    sanitized_params["tool_choice"] = {"type": "image_generation"}
+
         # Build the final ResponsesBody directly
         return ResponsesBody(
             **sanitized_params,
@@ -843,13 +905,13 @@ class Pipe:
 
         # 2) Models
         MODEL_ID: str = Field(
-            default="gpt-5-auto, gpt-5.2, gpt-5.2-pro, gpt-5.2-chat-latest, gpt-5-thinking-low, gpt-5-thinking, gpt-5-thinking-high, gpt-5-thinking-xhigh, gpt-4.1-nano, chatgpt-4o-latest, o3, gpt-4o",
+            default="gpt-5-auto, gpt-5.2, gpt-5.2-pro, gpt-5.2-chat-latest, gpt-5-thinking-low, gpt-5-thinking-medium, gpt-5-thinking-high, gpt-5-thinking-xhigh, gpt-4.1-nano, chatgpt-4o-latest, o3, gpt-4o",
             description=(
                 "Comma separated OpenAI model IDs. Each ID becomes a model entry in WebUI. "
                 "Supports all official OpenAI model IDs and pseudo IDs: "
                 "gpt-5-auto, "
                 "gpt-5-thinking-low, "
-                "gpt-5-thinking, "
+                "gpt-5-thinking-medium, "
                 "gpt-5-thinking-high, "
                 "gpt-5-thinking-xhigh, "
                 "gpt-5-thinking-mini, "
@@ -1004,6 +1066,14 @@ class Pipe:
             description="Select logging level.  Recommend INFO or WARNING for production use. DEBUG is useful for development and debugging.",
         )
 
+        SHOW_MARKERS_IN_CHAT: bool = Field(
+            default=False,
+            description=(
+                "If true, include internal marker tags like [openai_responses:v2:...] in assistant messages. "
+                "Useful for debugging persistence and item linkage; off by default."
+            ),
+        )
+
     class UserValves(BaseModel):
         """Per-user valve overrides."""
 
@@ -1012,6 +1082,14 @@ class Pipe:
         ] = Field(
             default="INHERIT",
             description="Select logging level. 'INHERIT' uses the pipe default.",
+        )
+
+        SHOW_MARKERS_IN_CHAT: Optional[bool] = Field(
+            default=None,
+            description=(
+                "Override: whether to include internal marker tags like [openai_responses:v2:...] in chat. "
+                "None uses the pipe default."
+            ),
         )
 
     # 4.2 Constructor and Entry Points
@@ -1030,8 +1108,21 @@ class Pipe:
             for model_id in self.valves.MODEL_ID.split(",")
             if model_id.strip()
         ]
+
+        def _display_model_id(model_id: str) -> str:
+            # If a thinking model was provided without an explicit effort suffix,
+            # make the UI label explicit (defaults to 'medium' in our alias map).
+            mid = model_id.strip()
+            if (
+                mid.endswith("-thinking")
+                and not re.search(r"-thinking-(none|low|medium|high|xhigh)$", mid)
+            ):
+                return f"{mid}-medium"
+            return mid
+
         return [
-            {"id": model_id, "name": f"OpenAI: {model_id}"} for model_id in model_ids
+            {"id": model_id, "name": f"OpenAI: {_display_model_id(model_id)}"}
+            for model_id in model_ids
         ]
 
     async def pipe(
@@ -1166,6 +1257,16 @@ class Pipe:
                 tools=__tools__,
                 strict=True,
             )
+
+        # If OpenWebUI exposed its image tool as a function (e.g. "generate_image"),
+        # transform_tools() maps it to {"type":"image_generation"}. Only keep it if
+        # the selected model family supports OpenAI's native image tool.
+        if responses_body.tools:
+            if model_family not in FEATURE_SUPPORT["image_gen_tool"]:
+                responses_body.tools = [
+                    t for t in responses_body.tools
+                    if not (isinstance(t, dict) and t.get("type") == "image_generation")
+                ] or None
 
         # Add web_search tool only if supported, enabled, and effort != low.
         # Noted that web search doesn't seem to work when effort = low.
@@ -1476,7 +1577,16 @@ class Pipe:
                         item_type = item.get("type", "")
                         item_name = item.get("name", "unnamed_tool")
 
-                        # Skip irrelevant item types
+                        # If an output item contains image data, render it inline for Open WebUI.
+                        img_md = _extract_image_markdown_from_output_item(item)
+                        if img_md:
+                            assistant_message += "\n\n" + "\n\n".join(img_md)
+                            await event_emitter(
+                                {"type": "chat:message", "data": {"content": assistant_message}}
+                            )
+
+                        # Skip message items (already rendered via streaming deltas). If they contained images,
+                        # the block above handled it.
                         if item_type in ("message"):
                             continue
 
@@ -1498,6 +1608,7 @@ class Pipe:
                                 metadata.get("message_id"),
                                 [item],
                                 openwebui_model,
+                                emit_marker=bool(getattr(valves, "SHOW_MARKERS_IN_CHAT", False)),
                             )
                             if hidden_uid_marker:
                                 self.logger.debug(
@@ -1572,6 +1683,32 @@ class Pipe:
                         body.input.extend(
                             final_response.get("output", [])
                         )  # This includes all non-visible items (e.g. reasoning, web_search_call, tool calls, etc..) and appends to body.input so they are included in future turns (if any)
+
+                        # Render any image outputs inline for Open WebUI (best-effort).
+                        try:
+                            img_md_all = _extract_all_image_markdown_from_output(
+                                final_response.get("output")
+                            )
+                        except Exception as e:
+                            self.logger.debug(
+                                "Image markdown extraction skipped (streaming): %s", e
+                            )
+                            img_md_all = []
+
+                        if img_md_all:
+                            # Avoid duplicating the same inline image block
+                            for md in img_md_all:
+                                if md and md not in assistant_message:
+                                    assistant_message += (
+                                        ("\n\n" if assistant_message else "") + md
+                                    )
+                            await event_emitter(
+                                {
+                                    "type": "chat:message",
+                                    "data": {"content": assistant_message},
+                                }
+                            )
+
                         break
 
                 if final_response is None:
@@ -1624,6 +1761,7 @@ class Pipe:
                             metadata.get("message_id"),
                             function_outputs,
                             openwebui_model,
+                            emit_marker=bool(getattr(valves, "SHOW_MARKERS_IN_CHAT", False)),
                         )
                         self.logger.debug("Persisted item: %s", hidden_uid_marker)
                         if hidden_uid_marker:
@@ -1843,6 +1981,7 @@ class Pipe:
                                 metadata.get("message_id"),
                                 [item],
                                 metadata.get("model", {}).get("id"),
+                                emit_marker=bool(getattr(valves, "SHOW_MARKERS_IN_CHAT", False)),
                             )
                             self.logger.debug("Persisted item: %s", hidden_uid_marker)
                             assistant_message += hidden_uid_marker
@@ -1918,6 +2057,16 @@ class Pipe:
                         event_emitter, content="", usage=total_usage, done=False
                     )
 
+
+                # Render any image outputs inline for Open WebUI
+                try:
+                    img_md_all = _extract_all_image_markdown_from_output(items)
+                except Exception as e:
+                    self.logger.debug("Image markdown extraction skipped: %s", e)
+                    img_md_all = []
+                if img_md_all:
+                    assistant_message += ("\n\n" if assistant_message else "") + "\n\n".join(img_md_all)
+
                 body.input.extend(items)
 
                 # Run tools if requested
@@ -1930,6 +2079,7 @@ class Pipe:
                             metadata.get("message_id"),
                             function_outputs,
                             openwebui_model_id,
+                            emit_marker=bool(getattr(valves, "SHOW_MARKERS_IN_CHAT", False)),
                         )
                         self.logger.debug("Persisted item: %s", hidden_uid_marker)
                         assistant_message += hidden_uid_marker
@@ -2059,8 +2209,24 @@ class Pipe:
         url = base_url.rstrip("/") + "/responses"
 
         # Normalize tool schema into Responses API format
-        request_body["tools"] = normalize_responses_tools(request_body.get("tools"))
-
+        # IMPORTANT: Do NOT inject tools: [] when the caller didn't specify tools.
+        # Some Open WebUI flows (notably image generation) may set tool_choice without
+        # explicitly sending a tools list; sending an explicit empty list can cause
+        # "tool not found" errors downstream.
+        if "tools" in request_body:
+            tools_norm = normalize_responses_tools(request_body.get("tools"))
+            if tools_norm:
+                request_body["tools"] = tools_norm
+            else:
+                request_body.pop("tools", None)
+        
+        # If the request explicitly chooses image_generation, ensure the tool is declared.
+        tc = request_body.get("tool_choice")
+        if isinstance(tc, dict) and tc.get("type") == "image_generation":
+            request_body.setdefault("tools", [])
+            if not any(isinstance(t, dict) and t.get("type") == "image_generation" for t in request_body["tools"]):
+                request_body["tools"].append({"type": "image_generation"})
+        
         # Preflight validation: fail early if still broken
         for i, tool in enumerate(request_body.get("tools") or []):
             if tool.get("type") == "function" and not tool.get("name"):
@@ -2142,8 +2308,21 @@ class Pipe:
         url = base_url.rstrip("/") + "/responses"
 
         # Normalize tool schema into Responses API format
-        request_params["tools"] = normalize_responses_tools(request_params.get("tools"))
-
+        # IMPORTANT: Do NOT inject tools: [] when the caller didn't specify tools.
+        if "tools" in request_params:
+            tools_norm = normalize_responses_tools(request_params.get("tools"))
+            if tools_norm:
+                request_params["tools"] = tools_norm
+            else:
+                request_params.pop("tools", None)
+        
+        # If the request explicitly chooses image_generation, ensure the tool is declared.
+        tc = request_params.get("tool_choice")
+        if isinstance(tc, dict) and tc.get("type") == "image_generation":
+            request_params.setdefault("tools", [])
+            if not any(isinstance(t, dict) and t.get("type") == "image_generation" for t in request_params["tools"]):
+                request_params["tools"].append({"type": "image_generation"})
+        
         # Preflight validation: fail early if still broken
         for i, tool in enumerate(request_params.get("tools") or []):
             if tool.get("type") == "function" and not tool.get("name"):
@@ -3106,13 +3285,16 @@ def persist_openai_response_items(
     message_id: str,
     items: List[Dict[str, Any]],
     openwebui_model_id: str,
+    *,
+    emit_marker: bool = False,
 ) -> str:
-    """Persist items and return their wrapped marker string.
+    """Persist items and optionally return a wrapped marker string.
 
     :param chat_id: Chat identifier used to locate the conversation.
     :param message_id: Message ID the items belong to.
     :param items: Sequence of payloads to store.
     :param openwebui_model_id: Fully qualified model ID the items originate from.
+    :param emit_marker: If True, return a hidden marker tag for debugging.
     :return: Concatenated empty-link encoded item IDs for later retrieval.
     """
 
@@ -3144,13 +3326,14 @@ def persist_openai_response_items(
             "message_id": message_id,
         }
         message_bucket["item_ids"].append(item_id)
-        hidden_uid_marker = wrap_marker(
-            create_marker(payload.get("type", "unknown"), ulid=item_id)
-        )
-        hidden_uid_markers.append(hidden_uid_marker)
+        if emit_marker:
+            hidden_uid_marker = wrap_marker(
+                create_marker(payload.get("type", "unknown"), ulid=item_id)
+            )
+            hidden_uid_markers.append(hidden_uid_marker)
 
     Chats.update_chat_by_id(chat_id, chat_model.chat)
-    return "".join(hidden_uid_markers)
+    return "".join(hidden_uid_markers) if emit_marker else ""
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -3222,6 +3405,180 @@ def _extract_image_count(usage: dict | None) -> int:
 
     return 0
 
+
+
+def _extract_image_markdown_from_output_item(item: dict) -> list[str]:
+    """
+    Extract image(s) from a Responses API output item and return Markdown image strings
+    that Open WebUI can render inline.
+
+    This is intentionally defensive because the Responses API and tool outputs can
+    represent images in multiple shapes depending on model/tool/version.
+
+    Supported (best-effort) schemas include:
+
+    Direct image items:
+      - {"type":"output_image","image_base64":"...","mime_type":"image/png"}
+      - {"type":"image_base64","data":"...","mime_type":"image/png"}
+      - {"type":"image","b64_json":"..."}  (legacy)
+      - {"type":"image_url","url":"https://..."}
+
+    Nested in image_generation_call items:
+      - {"type":"image_generation_call","result":[{"b64_json":"..."}]}
+      - {"type":"image_generation_call","result":{"data":[{"b64_json":"..."}]}}
+      - {"type":"image_generation_call","result":{"type":"output_image","image_base64":"..."}}
+
+    Nested in message content blocks:
+      - {"type":"message","content":[{"type":"output_image",...}, ...]}
+    """
+    if not isinstance(item, dict):
+        return []
+
+    def _b64_to_md(b64: str, mime: str | None) -> str:
+        mime = (mime or "image/png").strip() or "image/png"
+        return f"![generated image](data:{mime};base64,{b64})"
+
+    def _maybe_add_from_fields(d: dict) -> list[str]:
+        """Try common field names for base64 or URL images."""
+        out: list[str] = []
+
+        # base64 candidates
+        b64 = (
+            d.get("image_base64")
+            or d.get("b64_json")
+            or d.get("data")
+            or d.get("base64")
+            or d.get("image_b64")
+        )
+        mime = d.get("mime_type") or d.get("mime") or d.get("content_type") or "image/png"
+        if isinstance(b64, str) and b64.strip():
+            out.append(_b64_to_md(b64.strip(), str(mime) if mime else None))
+            return out
+
+        # url candidates
+        url = d.get("url")
+        if not url and isinstance(d.get("image_url"), dict):
+            url = d.get("image_url", {}).get("url")
+        if not url and isinstance(d.get("image"), dict):
+            url = d.get("image", {}).get("url")
+        if isinstance(url, str) and url.strip():
+            out.append(f"![generated image]({url.strip()})")
+            return out
+
+        return out
+
+    md: list[str] = []
+
+    itype = (item.get("type") or "").lower().strip()
+
+    # 1) image_generation_call often carries the image(s) inside `result`
+    if itype == "image_generation_call":
+        # Sometimes the call item itself carries b64/url fields
+        md.extend(_maybe_add_from_fields(item))
+        if md:
+            return md
+
+        # Candidates for nested outputs
+        candidates = []
+        for k in ("result", "results", "output", "outputs", "images", "image"):
+            v = item.get(k)
+            if v is not None:
+                candidates.append(v)
+
+        for res in candidates:
+            if res is None:
+                continue
+
+            # Common Images API style: {"created":..., "data":[{"b64_json":...}, ...]}
+            if isinstance(res, dict) and isinstance(res.get("data"), list):
+                for el in res.get("data") or []:
+                    if isinstance(el, dict):
+                        md.extend(_extract_image_markdown_from_output_item(el))
+                if md:
+                    return md
+                # Also try direct fields in the wrapper
+                md.extend(_maybe_add_from_fields(res))
+                if md:
+                    return md
+                continue
+
+            if isinstance(res, dict):
+                md.extend(_extract_image_markdown_from_output_item(res))
+                if md:
+                    return md
+                md.extend(_maybe_add_from_fields(res))
+                if md:
+                    return md
+                continue
+
+            if isinstance(res, list):
+                for el in res:
+                    if isinstance(el, dict):
+                        md.extend(_extract_image_markdown_from_output_item(el))
+                        if md:
+                            # keep collecting but allow early return for speed
+                            pass
+                    elif isinstance(el, str) and el.strip():
+                        s = el.strip()
+                        if s.startswith("http://") or s.startswith("https://"):
+                            md.append(f"![generated image]({s})")
+                        else:
+                            md.append(_b64_to_md(s, "image/png"))
+                if md:
+                    return md
+                continue
+
+            if isinstance(res, str) and res.strip():
+                s = res.strip()
+                if s.startswith("http://") or s.startswith("https://"):
+                    md.append(f"![generated image]({s})")
+                else:
+                    md.append(_b64_to_md(s, "image/png"))
+                return md
+
+        return md
+
+    # 2) Direct image item types
+    if itype in {"output_image", "image_base64", "image", "image_file"}:
+        md.extend(_maybe_add_from_fields(item))
+        if md:
+            return md
+
+    if itype in {"image_url", "output_image_url"}:
+        md.extend(_maybe_add_from_fields(item))
+        if md:
+            return md
+
+    # 3) Message items can contain image blocks
+    if itype == "message":
+        content = item.get("content")
+        if isinstance(content, list):
+            for block in content:
+                if isinstance(block, dict):
+                    btype = (block.get("type") or "").lower().strip()
+                    if btype in {
+                        "output_image",
+                        "image",
+                        "image_url",
+                        "image_file",
+                        "image_base64",
+                        "image_generation_call",  # just in case nested
+                    }:
+                        md.extend(_extract_image_markdown_from_output_item(block))
+        return md
+
+    # 4) Fallback: some wrappers omit `type` but still carry b64/url
+    md.extend(_maybe_add_from_fields(item))
+    return md
+
+
+def _extract_all_image_markdown_from_output(items: list[dict] | None) -> list[str]:
+    md: list[str] = []
+    if not items:
+        return md
+    for item in items:
+        md.extend(_extract_image_markdown_from_output_item(item))
+    return md
 
 def _count_image_generation_calls(items: list[dict] | None) -> int:
     """Count explicit image generation call items in a response payload."""
