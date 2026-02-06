@@ -21,6 +21,7 @@ Fixes a regression where requests without an explicit `tools` field could be sen
 - If normalization yields no usable tools, the `tools` field is removed instead of sending `[]`.
 - If `tool_choice.type == "image_generation"`, the manifold now guarantees `{"type":"image_generation"}` is present in `tools` before sending.
 - Applied consistently to both streaming and non-streaming Responses requests.
+- Legacy `tool_choice` requests for function `generate_image` are normalized to native `image_generation` so image calls route to Responses built-in tooling.
 
 ---
 

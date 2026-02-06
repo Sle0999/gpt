@@ -83,6 +83,9 @@ def normalize_responses_tools(tools):
       "parameters": {...},
       "strict": false
     }
+
+    Also maps Open WebUI's legacy ``generate_image`` function tool to
+    Responses API built-in image generation: ``{"type": "image_generation"}``.
     """
     if not tools:
         return []
@@ -104,6 +107,10 @@ def normalize_responses_tools(tools):
                 log.warning("Dropping invalid tool missing function.name: %s", redact(t))
                 continue
 
+            if name == "generate_image":
+                normalized.append({"type": "image_generation"})
+                continue
+
             normalized.append(
                 {
                     "type": "function",
@@ -120,6 +127,10 @@ def normalize_responses_tools(tools):
         if t.get("type") == "function":
             if not t.get("name"):
                 log.warning("Dropping invalid tool missing name: %s", redact(t))
+                continue
+
+            if t.get("name") == "generate_image":
+                normalized.append({"type": "image_generation"})
                 continue
 
             tool = copy.deepcopy(t)
@@ -142,6 +153,17 @@ def normalize_responses_tools(tools):
         dedup[key] = tool
 
     return list(dedup.values())
+
+
+def normalize_responses_tool_choice(tool_choice: Any) -> Any:
+    """Map legacy function-style image tool choices to Responses native type."""
+    if (
+        isinstance(tool_choice, dict)
+        and tool_choice.get("type") == "function"
+        and tool_choice.get("name") == "generate_image"
+    ):
+        return {"type": "image_generation"}
+    return tool_choice
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 1.1 Model Pricing (Approximate)
@@ -2086,6 +2108,9 @@ class Pipe:
             else:
                 request_body.pop("tools", None)
 
+        request_body["tool_choice"] = normalize_responses_tool_choice(
+            request_body.get("tool_choice")
+        )
         tc = request_body.get("tool_choice")
         if isinstance(tc, dict) and tc.get("type") == "image_generation":
             request_body.setdefault("tools", [])
@@ -2183,6 +2208,9 @@ class Pipe:
             else:
                 request_params.pop("tools", None)
 
+        request_params["tool_choice"] = normalize_responses_tool_choice(
+            request_params.get("tool_choice")
+        )
         tc = request_params.get("tool_choice")
         if isinstance(tc, dict) and tc.get("type") == "image_generation":
             request_params.setdefault("tools", [])
