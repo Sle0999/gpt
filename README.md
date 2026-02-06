@@ -60,7 +60,7 @@ This fork expands the Responses API manifold with routing, model aliasing, tool 
 - GPT‑5.2 model family + thinking tiers, updated alias mappings, and expanded pseudo‑model support.  
 - SmartRoute engine and router valves for `gpt-5-auto`.  
 - Tool normalization, image tool mapping, and secret‑safe logging.  
-- Note: version numbers v25–v33 were intentionally skipped in this repository’s numbering scheme.
+- Note: version numbers v24–v33 were intentionally skipped in this repository’s numbering scheme.
 
 ## v23 “SmartRoute” (previous)
 - Introduced `gpt-5-auto` routing valves and router debug output.  
