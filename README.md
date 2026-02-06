@@ -1,4 +1,4 @@
-# OpenAI Responses Manifold – v24 “SmartRoute”
+# OpenAI Responses Manifold – v25 “SmartRoute + Image Tooling Fixes”
 ### Improvements, Additions & Changes Made on Top of the Original
 
 **Built on top of:**  
@@ -6,11 +6,23 @@ https://github.com/jrkropp/open-webui-developer-toolkit/tree/main/functions/pipe
 *(original author: Justin Kropp)*  
 …but enhanced with a broad set of new features, a redesigned architecture, improved routing logic, and major optimizations throughout.
 
-This README lists **only the modifications** introduced in my v24 fork — not the original feature set.
+This README lists **only the modifications** introduced in my v25 fork — not the original feature set.
 
 ---
 
-# 🚀 Major Enhancements in v24
+# 🚀 Major Enhancements in v25
+
+
+## 0. 🛠 Responses API Image Tool Guard (New in v25)
+Fixes a regression where requests without an explicit `tools` field could be sent as `tools: []`, causing image generation tool-choice failures.
+
+### **What changed**
+- Tools are now normalized **only when the request already includes `tools`**.
+- If normalization yields no usable tools, the `tools` field is removed instead of sending `[]`.
+- If `tool_choice.type == "image_generation"`, the manifold now guarantees `{"type":"image_generation"}` is present in `tools` before sending.
+- Applied consistently to both streaming and non-streaming Responses requests.
+
+---
 
 ## 1. 🔮 SmartRoute System for `gpt-5-auto`
 A full routing engine replaces the original static model mapping.
@@ -145,7 +157,17 @@ v24 modifies and extends the reasoning system.
 
 ---
 
-# 🧾 Summary of v24 Additions
+## 9. 🏷 Better Model Display Names (New in v25)
+Model names shown in WebUI now expose explicit thinking level for key aliases.
+
+### **Display behavior updates**
+- `gpt-5-thinking` now displays with explicit medium effort.
+- `gpt-5.2` (and `gpt-5.2-chat-latest`) now display explicit `thinking: none`.
+- IDs are unchanged; only the human-readable `name` is enhanced.
+
+---
+
+# 🧾 Summary of v25 Additions
 
 v24 introduces **all of the following**, none of which exist in the original:
 
@@ -169,5 +191,5 @@ v24 introduces **all of the following**, none of which exist in the original:
 
 # 💬 Notes
 
-This README represents **only the improvements** made in my fork (v24).  
+This README represents **only the improvements** made in my fork (v25).  
 All other architectural and base functionality belong to the original author.

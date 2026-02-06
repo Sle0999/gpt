@@ -3,7 +3,7 @@ title: OpenAI Responses API Manifold
 id: openai_responses
 description: Brings OpenAI Response API support to Open WebUI, enabling features not possible via Completions API.
 required_open_webui_version: 0.6.3
-version: 24
+version: 25
 """
 
 from __future__ import annotations
@@ -1024,15 +1024,35 @@ class Pipe:
         self.session: aiohttp.ClientSession | None = None
         self.logger = SessionLogger.get_logger(__name__)
 
+    @staticmethod
+    def format_model_name(model_id: str) -> str:
+        thinking_effort_aliases = {
+            "gpt-5-thinking": "medium",
+            "gpt-5-thinking-low": "low",
+            "gpt-5-thinking-medium": "medium",
+            "gpt-5-thinking-high": "high",
+            "gpt-5-thinking-xhigh": "xhigh",
+            "gpt-5.2-thinking-low": "low",
+            "gpt-5.2-thinking-medium": "medium",
+            "gpt-5.2-thinking-high": "high",
+            "gpt-5.2-thinking-xhigh": "xhigh",
+        }
+
+        if model_id in thinking_effort_aliases:
+            return f"OpenAI: {model_id} (thinking: {thinking_effort_aliases[model_id]})"
+
+        if model_id in {"gpt-5.2", "gpt-5.2-chat-latest"}:
+            return f"OpenAI: {model_id} (thinking: none)"
+
+        return f"OpenAI: {model_id}"
+
     async def pipes(self):
         model_ids = [
             model_id.strip()
             for model_id in self.valves.MODEL_ID.split(",")
             if model_id.strip()
         ]
-        return [
-            {"id": model_id, "name": f"OpenAI: {model_id}"} for model_id in model_ids
-        ]
+        return [{"id": model_id, "name": self.format_model_name(model_id)} for model_id in model_ids]
 
     async def pipe(
         self,
@@ -2058,8 +2078,22 @@ class Pipe:
         }
         url = base_url.rstrip("/") + "/responses"
 
-        # Normalize tool schema into Responses API format
-        request_body["tools"] = normalize_responses_tools(request_body.get("tools"))
+        # Normalize tool schema into Responses API format only when provided.
+        if "tools" in request_body:
+            tools_norm = normalize_responses_tools(request_body.get("tools"))
+            if tools_norm:
+                request_body["tools"] = tools_norm
+            else:
+                request_body.pop("tools", None)
+
+        tc = request_body.get("tool_choice")
+        if isinstance(tc, dict) and tc.get("type") == "image_generation":
+            request_body.setdefault("tools", [])
+            if not any(
+                isinstance(t, dict) and t.get("type") == "image_generation"
+                for t in request_body["tools"]
+            ):
+                request_body["tools"].append({"type": "image_generation"})
 
         # Preflight validation: fail early if still broken
         for i, tool in enumerate(request_body.get("tools") or []):
@@ -2141,8 +2175,22 @@ class Pipe:
         }
         url = base_url.rstrip("/") + "/responses"
 
-        # Normalize tool schema into Responses API format
-        request_params["tools"] = normalize_responses_tools(request_params.get("tools"))
+        # Normalize tool schema into Responses API format only when provided.
+        if "tools" in request_params:
+            tools_norm = normalize_responses_tools(request_params.get("tools"))
+            if tools_norm:
+                request_params["tools"] = tools_norm
+            else:
+                request_params.pop("tools", None)
+
+        tc = request_params.get("tool_choice")
+        if isinstance(tc, dict) and tc.get("type") == "image_generation":
+            request_params.setdefault("tools", [])
+            if not any(
+                isinstance(t, dict) and t.get("type") == "image_generation"
+                for t in request_params["tools"]
+            ):
+                request_params["tools"].append({"type": "image_generation"})
 
         # Preflight validation: fail early if still broken
         for i, tool in enumerate(request_params.get("tools") or []):
