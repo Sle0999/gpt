@@ -1054,6 +1054,7 @@ class Pipe:
             "gpt-5-thinking-medium": "medium",
             "gpt-5-thinking-high": "high",
             "gpt-5-thinking-xhigh": "xhigh",
+            "gpt-5.2-thinking": "medium",
             "gpt-5.2-thinking-low": "low",
             "gpt-5.2-thinking-medium": "medium",
             "gpt-5.2-thinking-high": "high",
@@ -1621,6 +1622,18 @@ class Pipe:
                         "No final response received from OpenAI Responses API."
                     )
 
+                generated_image_md = _extract_generated_image_markdown(
+                    final_response.get("output")
+                )
+                if generated_image_md:
+                    assistant_message += (("\n\n" if assistant_message else "") + generated_image_md)
+                    await event_emitter(
+                        {
+                            "type": "chat:message",
+                            "data": {"content": assistant_message},
+                        }
+                    )
+
                 # Extract usage information from OpenAI response and pass-through to Open WebUI
                 usage = dict(final_response.get("usage") or {})
 
@@ -1841,6 +1854,10 @@ class Pipe:
                 )
 
                 items = response.get("output", [])
+
+                generated_image_md = _extract_generated_image_markdown(items)
+                if generated_image_md:
+                    assistant_message += (("\n\n" if assistant_message else "") + generated_image_md)
 
                 # Persist non-message items immediately and insert invisible markers
                 for item in items:
@@ -3386,6 +3403,62 @@ def _infer_image_count_from_text_reply(text: str | None) -> int:
 
     return 0
 
+
+def _extract_generated_image_markdown(items: list[dict] | None) -> str:
+    """Build Markdown image blocks from Responses output items when possible."""
+    if not items:
+        return ""
+
+    markdown_images: list[str] = []
+    seen_urls: set[str] = set()
+
+    def _append_url(url: str | None):
+        if not url:
+            return
+        url = str(url).strip()
+        if not url or url in seen_urls:
+            return
+        seen_urls.add(url)
+        markdown_images.append(f"![generated image]({url})")
+
+    def _append_base64_image(data: str | None):
+        if not data:
+            return
+        data = str(data).strip()
+        if not data:
+            return
+        _append_url(f"data:image/png;base64,{data}")
+
+    def _scan_obj(obj: Any):
+        if isinstance(obj, dict):
+            # Common image-bearing keys in Responses payloads
+            image_url = obj.get("image_url")
+            if isinstance(image_url, dict):
+                _append_url(image_url.get("url"))
+            elif isinstance(image_url, str):
+                _append_url(image_url)
+
+            _append_url(obj.get("url"))
+            _append_base64_image(obj.get("b64_json"))
+            _append_base64_image(obj.get("image_base64"))
+
+            for v in obj.values():
+                _scan_obj(v)
+        elif isinstance(obj, list):
+            for v in obj:
+                _scan_obj(v)
+
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        item_type = item.get("type")
+
+        if item_type == "message":
+            _scan_obj(item.get("content") or [])
+        elif item_type == "image_generation_call":
+            _scan_obj(item)
+
+    return "\n\n".join(markdown_images)
 
 def _is_image_model(name: str | None) -> bool:
     """Return True when the supplied model name represents image generation."""

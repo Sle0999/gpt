@@ -22,6 +22,7 @@ Fixes a regression where requests without an explicit `tools` field could be sen
 - If `tool_choice.type == "image_generation"`, the manifold now guarantees `{"type":"image_generation"}` is present in `tools` before sending.
 - Applied consistently to both streaming and non-streaming Responses requests.
 - Legacy `tool_choice` requests for function `generate_image` are normalized to native `image_generation` so image calls route to Responses built-in tooling.
+- The manifold now extracts image URLs/base64 from Responses output and appends renderable Markdown image blocks so generated images display in chat instead of only status text.
 
 ---
 
@@ -163,6 +164,7 @@ Model names shown in WebUI now expose explicit thinking level for key aliases.
 
 ### **Display behavior updates**
 - `gpt-5-thinking` now displays with explicit medium effort.
+- `gpt-5.2-thinking` now displays with explicit medium effort.
 - `gpt-5.2` (and `gpt-5.2-chat-latest`) now display explicit `thinking: none`.
 - IDs are unchanged; only the human-readable `name` is enhanced.
 
