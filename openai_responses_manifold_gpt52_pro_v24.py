@@ -1061,6 +1061,12 @@ class Pipe:
             "gpt-5.2-thinking-xhigh": "xhigh",
         }
 
+        if model_id == "gpt-5-thinking":
+            return "OpenAI: gpt-5-thinking-medium"
+
+        if model_id == "gpt-5.2-thinking":
+            return "OpenAI: gpt-5.2-thinking-medium"
+
         if model_id in thinking_effort_aliases:
             return f"OpenAI: {model_id} (thinking: {thinking_effort_aliases[model_id]})"
 
@@ -2137,6 +2143,15 @@ class Pipe:
             ):
                 request_body["tools"].append({"type": "image_generation"})
 
+        has_image_tool = any(
+            isinstance(t, dict) and t.get("type") == "image_generation"
+            for t in (request_body.get("tools") or [])
+        )
+        if has_image_tool:
+            request_body.setdefault("include", [])
+            if "image_generation_call.result" not in request_body["include"]:
+                request_body["include"].append("image_generation_call.result")
+
         # Preflight validation: fail early if still broken
         for i, tool in enumerate(request_body.get("tools") or []):
             if tool.get("type") == "function" and not tool.get("name"):
@@ -2236,6 +2251,15 @@ class Pipe:
                 for t in request_params["tools"]
             ):
                 request_params["tools"].append({"type": "image_generation"})
+
+        has_image_tool = any(
+            isinstance(t, dict) and t.get("type") == "image_generation"
+            for t in (request_params.get("tools") or [])
+        )
+        if has_image_tool:
+            request_params.setdefault("include", [])
+            if "image_generation_call.result" not in request_params["include"]:
+                request_params["include"].append("image_generation_call.result")
 
         # Preflight validation: fail early if still broken
         for i, tool in enumerate(request_params.get("tools") or []):
