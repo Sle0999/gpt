@@ -3,7 +3,7 @@ title: OpenAI Responses API Manifold
 id: openai_responses
 description: Brings OpenAI Response API support to Open WebUI, enabling features not possible via Completions API.
 required_open_webui_version: 0.6.3
-version: 35
+version: 36
 """
 
 from __future__ import annotations
@@ -169,6 +169,10 @@ MODEL_PRICING_USD_PER_MTOK = {
     "gpt-5.4-pro": {"input": 30.00, "output": 180.00},
     "gpt-5.4-mini": {"input": 0.75, "output": 4.50},
     "gpt-5.4-nano": {"input": 0.20, "output": 1.25},
+    "gpt-5.5": {"input": 2.50, "output": 15.00},
+    "gpt-5.5-pro": {"input": 30.00, "output": 180.00},
+    "gpt-5.5-mini": {"input": 0.75, "output": 4.50},
+    "gpt-5.5-nano": {"input": 0.20, "output": 1.25},
     # GPT‑5 family (still supported and useful for cost-sensitive workloads)
     "gpt-5": {"input": 1.25, "output": 10.00},
     "gpt-5-mini": {"input": 0.25, "output": 2.00},
@@ -177,6 +181,7 @@ MODEL_PRICING_USD_PER_MTOK = {
     # Coding-specialized GPT‑5 models
     "gpt-5-codex": {"input": 1.25, "output": 10.00},
     "gpt-5.3-codex": {"input": 1.75, "output": 14.00},
+    "gpt-5.5-codex": {"input": 2.50, "output": 15.00},
     # Legacy GPT‑5.x models kept for backwards compatibility
     "gpt-5.1": {"input": 1.25, "output": 10.00},
     "gpt-5.1-chat-latest": {"input": 1.25, "output": 10.00},
@@ -242,6 +247,10 @@ from open_webui.models.models import ModelForm, Models
 # Feature flags and other module level constants
 FEATURE_SUPPORT = {
     "web_search_tool": {
+        "gpt-5.5",
+        "gpt-5.5-pro",
+        "gpt-5.5-mini",
+        "gpt-5.5-nano",
         "gpt-5.4",
         "gpt-5.4-pro",
         "gpt-5.4-mini",
@@ -266,6 +275,10 @@ FEATURE_SUPPORT = {
         "o4-mini-deep-research",
     },  # OpenAI's built-in web search tool.
     "image_gen_tool": {
+        "gpt-5.5",
+        "gpt-5.5-pro",
+        "gpt-5.5-mini",
+        "gpt-5.5-nano",
         "gpt-5.4",
         "gpt-5.4-pro",
         "gpt-5.4-mini",
@@ -273,6 +286,7 @@ FEATURE_SUPPORT = {
         "gpt-5",
         "gpt-5.2",
         "gpt-5-auto",
+        "gpt-5.5-auto",
         "gpt-5.1",
         "gpt-5.1-mini",
         "gpt-5.1-nano",
@@ -287,6 +301,10 @@ FEATURE_SUPPORT = {
         "o3",
     },  # OpenAI's built-in image generation tool.
     "function_calling": {
+        "gpt-5.5",
+        "gpt-5.5-pro",
+        "gpt-5.5-mini",
+        "gpt-5.5-nano",
         "gpt-5.4",
         "gpt-5.4-pro",
         "gpt-5.4-mini",
@@ -302,6 +320,7 @@ FEATURE_SUPPORT = {
         "gpt-5-nano",
         "gpt-5-codex",
         "gpt-5.3-codex",
+        "gpt-5.5-codex",
         "gpt-4.1",
         "gpt-4.1-mini",
         "gpt-4o",
@@ -315,6 +334,10 @@ FEATURE_SUPPORT = {
         "o4-mini-deep-research",
     },  # OpenAI's native function calling support.
     "reasoning": {
+        "gpt-5.5",
+        "gpt-5.5-pro",
+        "gpt-5.5-mini",
+        "gpt-5.5-nano",
         "gpt-5.4",
         "gpt-5.4-pro",
         "gpt-5.4-mini",
@@ -330,6 +353,7 @@ FEATURE_SUPPORT = {
         "gpt-5-nano",
         "gpt-5-codex",
         "gpt-5.3-codex",
+        "gpt-5.5-codex",
         "o3",
         "o4-mini",
         "o3-mini",
@@ -357,6 +381,10 @@ FEATURE_SUPPORT = {
         "o4-mini-deep-research",
     },  # OpenAI's reasoning summary feature.  May require OpenAI org verification before use.
     "verbosity": {
+        "gpt-5.5",
+        "gpt-5.5-pro",
+        "gpt-5.5-mini",
+        "gpt-5.5-nano",
         "gpt-5.4",
         "gpt-5.4-pro",
         "gpt-5.4-mini",
@@ -372,6 +400,7 @@ FEATURE_SUPPORT = {
         "gpt-5-nano",
         "gpt-5-codex",
         "gpt-5.3-codex",
+        "gpt-5.5-codex",
     },  # Supports OpenAI's verbosity parameter.
     # NOTE: Deep Research models are not yet supported in pipe.  Work in-progress.
     "deep_research": {
@@ -697,6 +726,8 @@ class ResponsesBody(BaseModel):
             messages_index: dict[str, dict] = {}
             try:
                 chat_model = Chats.get_chat_by_id(chat_id)
+                if inspect.isawaitable(chat_model):
+                    chat_model = None
                 if chat_model:
                     pipe_root = (chat_model.chat or {}).get("openai_responses_pipe") or {}
                     if isinstance(pipe_root, dict):
@@ -3488,6 +3519,8 @@ def persist_openai_response_items(
         return ""
 
     chat_model = Chats.get_chat_by_id(chat_id)
+    if inspect.isawaitable(chat_model):
+        return ""
     if not chat_model:
         return ""
 
@@ -4225,6 +4258,8 @@ def fetch_openai_response_items(
     """
 
     chat_model = Chats.get_chat_by_id(chat_id)
+    if inspect.isawaitable(chat_model):
+        return {}
     if not chat_model:
         return {}
 
