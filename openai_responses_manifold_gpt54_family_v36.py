@@ -726,6 +726,8 @@ class ResponsesBody(BaseModel):
             messages_index: dict[str, dict] = {}
             try:
                 chat_model = Chats.get_chat_by_id(chat_id)
+                if inspect.isawaitable(chat_model):
+                    chat_model = None
                 if chat_model:
                     pipe_root = (chat_model.chat or {}).get("openai_responses_pipe") or {}
                     if isinstance(pipe_root, dict):
@@ -3517,6 +3519,8 @@ def persist_openai_response_items(
         return ""
 
     chat_model = Chats.get_chat_by_id(chat_id)
+    if inspect.isawaitable(chat_model):
+        return ""
     if not chat_model:
         return ""
 
@@ -4254,6 +4258,8 @@ def fetch_openai_response_items(
     """
 
     chat_model = Chats.get_chat_by_id(chat_id)
+    if inspect.isawaitable(chat_model):
+        return {}
     if not chat_model:
         return {}
 
